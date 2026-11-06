@@ -5,7 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -48,10 +52,63 @@ private const val RULES =
     "কাজের তালিকায় যোগ করতে [[TASK:কাজটা]]। " +
     "সাঈদ চাইলেই শুধু ট্যাগ দেবে, নইলে দেবে না।"
 
+private val MODELS = listOf("gemini-3.6-flash", "gemini-2.5-flash", "gemini-flash-latest")
+
+class IconView(context: Context, private val kind: Int) : View(context) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#39FF88")
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    var tint: Int = Color.parseColor("#39FF88")
+        set(value) {
+            field = value
+            p.color = value
+            invalidate()
+        }
+
+    override fun onDraw(c: Canvas) {
+        super.onDraw(c)
+        val s = minOf(width, height).toFloat()
+        val cx = width / 2f
+        val cy = height / 2f
+        p.strokeWidth = s * 0.08f
+        when (kind) {
+            0 -> {
+                val rw = s * 0.14f
+                c.drawRoundRect(RectF(cx - rw, cy - s * 0.3f, cx + rw, cy + s * 0.04f), rw, rw, p)
+                c.drawArc(RectF(cx - s * 0.25f, cy - s * 0.2f, cx + s * 0.25f, cy + s * 0.2f), 20f, 140f, false, p)
+                c.drawLine(cx, cy + s * 0.2f, cx, cy + s * 0.32f, p)
+                c.drawLine(cx - s * 0.1f, cy + s * 0.32f, cx + s * 0.1f, cy + s * 0.32f, p)
+            }
+            1 -> {
+                c.drawLine(cx - s * 0.28f, cy - s * 0.18f, cx + s * 0.28f, cy - s * 0.18f, p)
+                c.drawLine(cx - s * 0.28f, cy, cx + s * 0.1f, cy, p)
+                c.drawLine(cx - s * 0.28f, cy + s * 0.18f, cx + s * 0.28f, cy + s * 0.18f, p)
+            }
+            2 -> {
+                val path = Path()
+                path.moveTo(cx - s * 0.26f, cy - s * 0.22f)
+                path.lineTo(cx + s * 0.3f, cy)
+                path.lineTo(cx - s * 0.26f, cy + s * 0.22f)
+                path.lineTo(cx - s * 0.12f, cy)
+                path.close()
+                c.drawPath(path, p)
+            }
+            3 -> {
+                c.drawLine(cx + s * 0.22f, cy, cx - s * 0.22f, cy, p)
+                c.drawLine(cx - s * 0.22f, cy, cx - s * 0.02f, cy - s * 0.2f, p)
+                c.drawLine(cx - s * 0.22f, cy, cx - s * 0.02f, cy + s * 0.2f, p)
+            }
+        }
+    }
+}
+
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val green = Color.parseColor("#39FF88")
-    private val bg = Color.parseColor("#05080A")
     private val card = Color.parseColor("#0E1A14")
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -60,19 +117,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var prefs: SharedPreferences
     private lateinit var sphere: SphereView
     private lateinit var status: TextView
-    private lateinit var panel: FrameLayout
-    private lateinit var chatView: View
+    private lateinit var homeUser: TextView
+    private lateinit var homeCaption: TextView
+    private lateinit var homeInput: EditText
+    private lateinit var page: FrameLayout
+    private lateinit var pageTitle: TextView
+    private lateinit var pageBody: FrameLayout
     private lateinit var chatLog: LinearLayout
     private lateinit var chatScroll: ScrollView
+    private var inSub = false
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private val history = JSONArray()
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    private fun box(fill: Int = card): GradientDrawable = GradientDrawable().apply {
+    private fun box(fill: Int = card, radius: Int = 14): GradientDrawable = GradientDrawable().apply {
         setColor(fill)
-        cornerRadius = dp(14).toFloat()
+        cornerRadius = dp(radius).toFloat()
         setStroke(dp(1), Color.parseColor("#6639FF88"))
     }
 
@@ -101,7 +163,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         setTextColor(Color.WHITE)
         textSize = 15f
         background = box(Color.parseColor("#0A120E"))
-        setPadding(dp(12), dp(10), dp(12), dp(10))
+        setPadding(dp(14), dp(10), dp(14), dp(10))
         maxLines = 4
     }
 
@@ -110,70 +172,120 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         layoutParams = ViewGroup.LayoutParams(MATCH, MATCH)
     }
 
-    private fun label(title: String): TextView = tv(title, 16f, green).apply {
-        typeface = Typeface.DEFAULT_BOLD
-        setPadding(dp(4), dp(4), dp(4), dp(8))
+    private fun circleBtn(kind: Int, size: Int, filled: Boolean, onClick: () -> Unit): FrameLayout {
+        val f = FrameLayout(this)
+        f.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (filled) green else Color.parseColor("#0C1812"))
+            setStroke(dp(1), if (filled) green else Color.parseColor("#8839FF88"))
+        }
+        val icon = IconView(this, kind)
+        icon.tint = if (filled) Color.parseColor("#03140A") else green
+        val inner = dp(size * 55 / 100)
+        f.addView(icon, FrameLayout.LayoutParams(inner, inner, Gravity.CENTER))
+        f.setOnClickListener { onClick() }
+        f.layoutParams = LinearLayout.LayoutParams(dp(size), dp(size)).apply {
+            setMargins(dp(4), dp(4), dp(4), dp(4))
+        }
+        return f
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("angela", Context.MODE_PRIVATE)
         tts = TextToSpeech(this, this)
-        window.statusBarColor = bg
-        window.navigationBarColor = bg
+        window.statusBarColor = Color.parseColor("#010504")
+        window.navigationBarColor = Color.parseColor("#061A10")
 
-        val root = LinearLayout(this).apply {
+        val root = FrameLayout(this)
+        root.background = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.parseColor("#010504"), Color.parseColor("#061A10"))
+        )
+
+        chatLog = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        chatScroll = ScrollView(this).apply { addView(chatLog) }
+
+        val home = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
-            setPadding(dp(12), dp(28), dp(12), dp(8))
+            setPadding(dp(14), dp(30), dp(14), dp(10))
         }
 
-        val title = tv("ANGELA", 24f, green).apply {
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        top.addView(circleBtn(1, 44, false) { openMenu() })
+        val title = tv("ANGELA", 22f, green).apply {
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.3f
+            letterSpacing = 0.35f
         }
-        root.addView(title, LinearLayout.LayoutParams(MATCH, WRAP))
+        top.addView(title, LinearLayout.LayoutParams(0, WRAP, 1f))
+        top.addView(View(this), LinearLayout.LayoutParams(dp(52), dp(44)))
+        home.addView(top, LinearLayout.LayoutParams(MATCH, WRAP))
 
         sphere = SphereView(this)
         sphere.setOnClickListener { listen() }
-        root.addView(sphere, LinearLayout.LayoutParams(MATCH, dp(190)))
+        home.addView(sphere, LinearLayout.LayoutParams(MATCH, 0, 1f))
 
-        status = tv("গোলক চাপো বা মাইক চাপো", 13f, Color.GRAY).apply { gravity = Gravity.CENTER }
-        root.addView(status, LinearLayout.LayoutParams(MATCH, WRAP))
+        status = tv("মাইক চাপো বা লেখো", 13f, Color.GRAY).apply { gravity = Gravity.CENTER }
+        home.addView(status, LinearLayout.LayoutParams(MATCH, WRAP))
 
-        val cards: List<Pair<String, () -> Unit>> = listOf(
-            "CHAT" to { showChat() },
-            "MEMORY" to { showList("MEMORY", "mem") },
-            "SOUL" to { showSoul() },
-            "TASKS" to { showList("TODAY TASKS", "tasks") },
-            "HEADLINES" to { showHeadlines() },
-            "SETTINGS" to { showSettings() }
-        )
-        for (r in 0..1) {
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            for (c in 0..2) {
-                val item = cards[r * 3 + c]
-                val tile = tv(item.first, 12f, green).apply {
-                    background = box()
-                    gravity = Gravity.CENTER
-                    typeface = Typeface.DEFAULT_BOLD
-                    setPadding(dp(4), dp(12), dp(4), dp(12))
-                    setOnClickListener { item.second() }
-                }
-                row.addView(tile, LinearLayout.LayoutParams(0, WRAP, 1f).apply {
-                    setMargins(dp(3), dp(3), dp(3), dp(3))
-                })
-            }
-            root.addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
+        homeUser = tv("", 13f, Color.GRAY).apply { gravity = Gravity.CENTER }
+        homeCaption = tv("", 17f).apply { gravity = Gravity.CENTER }
+        val capBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(4), dp(8), dp(4))
         }
+        capBox.addView(homeUser, LinearLayout.LayoutParams(MATCH, WRAP))
+        capBox.addView(homeCaption, LinearLayout.LayoutParams(MATCH, WRAP))
+        val capScroll = ScrollView(this).apply { addView(capBox) }
+        home.addView(capScroll, LinearLayout.LayoutParams(MATCH, dp(120)))
 
-        panel = FrameLayout(this)
-        root.addView(panel, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = dp(8) })
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        homeInput = input("এখানে লেখো...")
+        homeInput.background = box(Color.parseColor("#0A120E"), 26)
+        bar.addView(homeInput, LinearLayout.LayoutParams(0, WRAP, 1f))
+        bar.addView(circleBtn(2, 46, false) {
+            val t = homeInput.text.toString()
+            homeInput.setText("")
+            send(t)
+        })
+        bar.addView(circleBtn(0, 64, true) { listen() })
+        home.addView(bar, LinearLayout.LayoutParams(MATCH, WRAP))
 
-        chatView = buildChat()
+        page = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#F5030906"))
+            isClickable = true
+            visibility = View.GONE
+        }
+        val pageCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(30), dp(14), dp(10))
+        }
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        head.addView(circleBtn(3, 44, false) { goBack() })
+        pageTitle = tv("", 18f, green).apply {
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(12), 0, 0, 0)
+        }
+        head.addView(pageTitle)
+        pageCol.addView(head, LinearLayout.LayoutParams(MATCH, WRAP))
+        pageBody = FrameLayout(this)
+        pageCol.addView(pageBody, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = dp(10) })
+        page.addView(pageCol, FrameLayout.LayoutParams(MATCH, MATCH))
+
+        root.addView(home, FrameLayout.LayoutParams(MATCH, MATCH))
+        root.addView(page, FrameLayout.LayoutParams(MATCH, MATCH))
         setContentView(root)
-        showChat()
+
         addBubble("আমি অ্যাঞ্জেলা। বলো, কেমন আছ?", false)
 
         if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
@@ -181,70 +293,60 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    override fun onInit(code: Int) {
-        if (code == TextToSpeech.SUCCESS) {
-            var r = tts?.setLanguage(Locale("bn", "BD"))
-            if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
-                r = tts?.setLanguage(Locale("bn", "IN"))
-            }
-            ttsReady = r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED
-            tts?.setPitch(1.25f)
-            tts?.setSpeechRate(0.95f)
-            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) { runOnUiThread { sphere.active = true } }
-                override fun onDone(id: String?) { runOnUiThread { sphere.active = false } }
-                @Deprecated("Deprecated in Java")
-                override fun onError(id: String?) { runOnUiThread { sphere.active = false } }
-            })
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (page.visibility == View.VISIBLE) goBack() else super.onBackPressed()
+    }
+
+    private fun goBack() {
+        if (inSub) openMenu() else page.visibility = View.GONE
+    }
+
+    private fun menuRow(title: String, sub: String, onClick: () -> Unit): View {
+        val r = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = box()
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            setOnClickListener { onClick() }
         }
+        r.addView(tv(title, 16f, green).apply { typeface = Typeface.DEFAULT_BOLD })
+        r.addView(tv(sub, 12f, Color.GRAY))
+        r.layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply {
+            setMargins(dp(2), dp(5), dp(2), dp(5))
+        }
+        return r
     }
 
-    override fun onDestroy() {
-        tts?.stop()
-        tts?.shutdown()
-        super.onDestroy()
+    private fun openMenu() {
+        inSub = false
+        page.visibility = View.VISIBLE
+        pageTitle.text = "MENU"
+        pageBody.removeAllViews()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(menuRow("CHAT", "কথোপকথনের ইতিহাস") { openSub("CHAT", chatScroll) })
+        col.addView(menuRow("MEMORY", "মনে রাখা কথা") { openSub("MEMORY", listView("mem")) })
+        col.addView(menuRow("SOUL", "অ্যাঞ্জেলার ব্যক্তিত্ব") { openSub("SOUL", soulView()) })
+        col.addView(menuRow("TODAY TASKS", "আজকের কাজ") { openSub("TODAY TASKS", listView("tasks")) })
+        col.addView(menuRow("TODAY HEADLINES", "আজকের খবর") { openSub("TODAY HEADLINES", headlinesView()) })
+        col.addView(menuRow("SETTINGS", "চাবি ও সেটিংস") { openSub("SETTINGS", settingsView()) })
+        pageBody.addView(ScrollView(this).apply { addView(col) })
     }
 
-    private fun buildChat(): View {
+    private fun openSub(title: String, view: View) {
+        inSub = true
+        pageTitle.text = title
+        pageBody.removeAllViews()
+        pageBody.addView(view)
+    }
+
+    private fun headlinesView(): View {
         val b = vbox()
-        chatLog = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        chatScroll = ScrollView(this).apply { addView(chatLog) }
-        b.addView(chatScroll, LinearLayout.LayoutParams(MATCH, 0, 1f))
-        val field = input("এখানে লেখো...")
-        val mic = btn("🎤") { listen() }
-        val go = btn("➤") {
-            val t = field.text.toString()
-            field.setText("")
-            send(t)
-        }
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        row.addView(field, LinearLayout.LayoutParams(0, WRAP, 1f))
-        row.addView(mic)
-        row.addView(go)
-        b.addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
+        b.addView(tv("এই অংশ পরের ধাপে চালু করব, যাতে সত্যিকারের খবর আসে।", 14f))
         return b
     }
 
-    private fun showChat() {
-        panel.removeAllViews()
-        panel.addView(chatView)
-    }
-
-    private fun showHeadlines() {
-        panel.removeAllViews()
+    private fun settingsView(): View {
         val b = vbox()
-        b.addView(label("TODAY HEADLINES"))
-        b.addView(tv("এই কার্ড পরের ধাপে চালু করব, যাতে সত্যিকারের খবর আসে।", 14f))
-        panel.addView(b)
-    }
-
-    private fun showSettings() {
-        panel.removeAllViews()
-        val b = vbox()
-        b.addView(label("SETTINGS"))
         b.addView(tv("Gemini API চাবি:", 14f))
         val key = input("চাবি পেস্ট করো")
         b.addView(key, LinearLayout.LayoutParams(MATCH, WRAP))
@@ -259,13 +361,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         })
         b.addView(st)
-        panel.addView(b)
+        return b
     }
 
-    private fun showSoul() {
-        panel.removeAllViews()
+    private fun soulView(): View {
         val b = vbox()
-        b.addView(label("SOUL (ব্যক্তিত্ব)"))
         val field = input("")
         field.minLines = 6
         field.gravity = Gravity.TOP
@@ -280,7 +380,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             field.setText(DEFAULT_SOUL)
         })
         b.addView(row)
-        panel.addView(b)
+        return b
     }
 
     private fun getList(k: String): List<String> =
@@ -290,10 +390,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         prefs.edit().putString(k, l.takeLast(50).joinToString("\n")).apply()
     }
 
-    private fun showList(title: String, key: String) {
-        panel.removeAllViews()
+    private fun listView(key: String): View {
         val b = vbox()
-        b.addView(label(title))
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val sc = ScrollView(this).apply { addView(list) }
         b.addView(sc, LinearLayout.LayoutParams(MATCH, 0, 1f))
@@ -332,7 +430,31 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         row.addView(field, LinearLayout.LayoutParams(0, WRAP, 1f))
         row.addView(add)
         b.addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
-        panel.addView(b)
+        return b
+    }
+
+    override fun onInit(code: Int) {
+        if (code == TextToSpeech.SUCCESS) {
+            var r = tts?.setLanguage(Locale("bn", "BD"))
+            if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                r = tts?.setLanguage(Locale("bn", "IN"))
+            }
+            ttsReady = r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED
+            tts?.setPitch(1.25f)
+            tts?.setSpeechRate(0.95f)
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(id: String?) { runOnUiThread { sphere.active = true } }
+                override fun onDone(id: String?) { runOnUiThread { sphere.active = false } }
+                @Deprecated("Deprecated in Java")
+                override fun onError(id: String?) { runOnUiThread { sphere.active = false } }
+            })
+        }
+    }
+
+    override fun onDestroy() {
+        tts?.stop()
+        tts?.shutdown()
+        super.onDestroy()
     }
 
     private fun addBubble(text: String, mine: Boolean) {
@@ -347,6 +469,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         chatLog.addView(b, lp)
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+        if (mine) {
+            homeUser.text = text
+            homeCaption.text = ""
+        } else {
+            homeCaption.text = text
+        }
     }
 
     private fun listen() {
@@ -372,11 +500,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun send(text: String) {
         if (text.isBlank()) return
-        showChat()
         addBubble(text, true)
         val key = prefs.getString("key", "") ?: ""
         if (key.isBlank()) {
-            addBubble("আগে SETTINGS-এ গিয়ে Gemini চাবি বসাও।", false)
+            addBubble("আগে মেনু থেকে SETTINGS-এ গিয়ে Gemini চাবি বসাও।", false)
             return
         }
         status.text = "ভাবছি..."
@@ -399,7 +526,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 if (okReply == null) {
                     history.remove(history.length() - 1)
                     sphere.active = false
-                    status.text = "গোলক চাপো বা মাইক চাপো"
+                    status.text = "মাইক চাপো বা লেখো"
                     addBubble("সমস্যা হয়েছে: $errMsg", false)
                 } else {
                     handleReply(okReply)
@@ -422,29 +549,38 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 JSONObject().put("parts", JSONArray().put(JSONObject().put("text", buildSoul())))
             )
             .put("contents", history)
-            .put(
-                "generationConfig",
-                JSONObject().put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
-            )
-        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.setRequestProperty("x-goog-api-key", key)
-        conn.connectTimeout = 20000
-        conn.readTimeout = 40000
-        conn.doOutput = true
-        conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-        val code = conn.responseCode
-        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-        val text = stream.bufferedReader().use { it.readText() }
-        if (code == 429) throw Exception("ফ্রি লিমিট শেষ, একটু পরে বলো")
-        if (code !in 200..299) throw Exception("কোড " + code)
-        val parts = JSONObject(text).getJSONArray("candidates").getJSONObject(0)
-            .getJSONObject("content").getJSONArray("parts")
-        val sb = StringBuilder()
-        for (i in 0 until parts.length()) sb.append(parts.getJSONObject(i).optString("text"))
-        return sb.toString()
+        var lastErr = "অজানা সমস্যা"
+        for (m in MODELS) {
+            val url = URL("https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("x-goog-api-key", key)
+            conn.connectTimeout = 20000
+            conn.readTimeout = 40000
+            conn.doOutput = true
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val text = stream.bufferedReader().use { it.readText() }
+            if (code in 200..299) {
+                val cands = JSONObject(text).optJSONArray("candidates")
+                if (cands == null || cands.length() == 0) throw Exception("উত্তর খালি এসেছে, আবার বলো")
+                val parts = cands.getJSONObject(0).getJSONObject("content").getJSONArray("parts")
+                val sb = StringBuilder()
+                for (i in 0 until parts.length()) sb.append(parts.getJSONObject(i).optString("text"))
+                return sb.toString()
+            }
+            if (code == 429) throw Exception("ফ্রি লিমিট শেষ, একটু পরে বলো")
+            var msg = ""
+            try {
+                msg = JSONObject(text).getJSONObject("error").optString("message")
+            } catch (ex: Exception) {
+            }
+            lastErr = ("কোড " + code + " (" + m + ") " + msg).take(220)
+            if (code != 404) break
+        }
+        throw Exception(lastErr)
     }
 
     private fun handleReply(raw: String) {
@@ -460,7 +596,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val cmds = re.findAll(raw).toList()
         val clean = raw.replace(re, "").replace("*", "").trim()
         sphere.active = false
-        status.text = "গোলক চাপো বা মাইক চাপো"
+        status.text = "মাইক চাপো বা লেখো"
         addBubble(clean, false)
         if (ttsReady && clean.isNotEmpty()) {
             tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "angela")
