@@ -1,10 +1,6 @@
 package com.saeed.angela
 
 import android.Manifest
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -14,17 +10,19 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.Base64
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -34,12 +32,14 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.NotificationCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.Locale
 
 private const val DEFAULT_SOUL =
@@ -61,26 +61,11 @@ private const val RULES =
     "কাজের তালিকায় যোগ করতে [[TASK:কাজটা]]। " +
     "সাঈদ চাইলেই শুধু ট্যাগ দেবে, নইলে দেবে না।"
 
-private val MODELS = listOf("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash")
+private const val VOICE_NOTE =
+    "(এটা সাঈদের কণ্ঠের রেকর্ডিং। প্রথমে [[HEARD:সে যা বলেছে ঠিক তাই লেখো]] লিখবে, " +
+    "তারপর স্বাভাবিকভাবে উত্তর দেবে। অডিওতে স্পষ্ট কথা না থাকলে শুধু [[HEARD:]] লিখবে, আর কিছু না।)"
 
-class AngelaService : Service() {
-    override fun onBind(intent: Intent?): IBinder? = null
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelId = "angela_bg_channel"
-            val channel = NotificationChannel(channelId, "Angela Background Service", NotificationManager.IMPORTANCE_LOW)
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
-            val notification: Notification = NotificationCompat.Builder(this, channelId)
-                .setContentTitle("Angela Active")
-                .setContentText("অ্যাঞ্জেলা ব্যাকগ্রাউন্ডে সচল আছে...")
-                .setSmallIcon(android.R.drawable.ic_menu_mic)
-                .build()
-            startForeground(1, notification)
-        }
-        return START_STICKY
-    }
-}
+private val MODELS = listOf("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash")
 
 class IconView(context: Context, private val kind: Int) : View(context) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -134,14 +119,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var chatLog: LinearLayout
     private lateinit var chatScroll: ScrollView
     private lateinit var chatPane: LinearLayout
-    private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var autoListen = true
-    private var listening = false
     private var busy = false
-    private var resumed = false
     private var inSub = false
+    @Volatile private var listening = false
+    @Volatile private var resumed = false
+    @Volatile private var gen = 0
     private val history = JSONArray()
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -209,13 +194,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         window.statusBarColor = Color.parseColor("#070418")
         window.navigationBarColor = Color.parseColor("#120A3A")
 
-        val serviceIntent = Intent(this, AngelaService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
-
         val root = FrameLayout(this)
         root.background = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -253,7 +231,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         orb = MicOrb(this)
         orb.setOnClickListener {
             autoListen = !autoListen
-            if (autoListen) startListening() else {
+            if (autoListen) {
+                startListening()
+            } else {
                 stopListening()
                 setOrb(0)
             }
@@ -309,7 +289,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
-        recognizer?.destroy()
         tts?.stop()
         tts?.shutdown()
         super.onDestroy()
@@ -335,41 +314,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {
-            orb.level = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
-        }
-        override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
-        override fun onPartialResults(partialResults: Bundle?) {}
-        override fun onEvent(eventType: Int, params: Bundle?) {}
-        override fun onError(error: Int) {
-            listening = false
-            orb.level = 0f
-            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
-                autoListen = false
-                setOrb(0)
-                status.text = "মাইকের অনুমতি দাও (ফোনের সেটিংস থেকে)"
-                return
-            }
-            if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
-                recognizer?.destroy()
-                recognizer = null
-            }
-            val wait = if (error == SpeechRecognizer.ERROR_NO_MATCH ||
-                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) 300L else 1500L
-            ui.postDelayed({ startListening() }, wait)
-        }
-        override fun onResults(results: Bundle?) {
-            listening = false
-            orb.level = 0f
-            val t = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            if (t.isNullOrBlank()) startListening() else send(t)
-        }
-    }
-
     private fun startListening() {
         if (!resumed || busy || listening) return
         if (page.visibility == View.VISIBLE) return
@@ -377,35 +321,158 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             setOrb(0)
             return
         }
+        if (prefs.getString("key", "").isNullOrBlank()) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CALL_PHONE), 1)
             return
         }
-        if (recognizer == null) {
-            recognizer = SpeechRecognizer.createSpeechRecognizer(this)
-            recognizer?.setRecognitionListener(listener)
-        }
-        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "bn-BD")
-            .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
-        try {
-            listening = true
-            setOrb(1)
-            recognizer?.startListening(i)
-        } catch (e: Exception) {
-            listening = false
-        }
+        gen++
+        val my = gen
+        listening = true
+        setOrb(1)
+        Thread { capture(my) }.start()
     }
 
     private fun stopListening() {
+        gen++
         listening = false
-        try {
-            recognizer?.cancel()
+        orb.level = 0f
+    }
+
+    private fun writeShorts(out: ByteArrayOutputStream, buf: ShortArray, n: Int) {
+        for (i in 0 until n) {
+            val v = buf[i].toInt()
+            out.write(v and 0xFF)
+            out.write((v shr 8) and 0xFF)
+        }
+    }
+
+    private fun capture(my: Int) {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setOnAudioFocusChangeListener { }
+            .build()
+        am.requestAudioFocus(focus)
+
+        val rate = 16000
+        val minBuf = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val made: AudioRecord? = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC, rate,
+                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                maxOf(minBuf, 8192)
+            )
         } catch (e: Exception) {
+            null
+        }
+        if (made == null || made.state != AudioRecord.STATE_INITIALIZED) {
+            made?.release()
+            am.abandonAudioFocusRequest(focus)
+            runOnUiThread {
+                if (my == gen) {
+                    listening = false
+                    status.text = "মাইক পাওয়া যাচ্ছে না, আবার চেষ্টা করছি..."
+                    ui.postDelayed({ startListening() }, 800)
+                }
+            }
+            return
+        }
+        val rec: AudioRecord = made
+
+        val chunk = ShortArray(1600)
+        val pcm = ByteArrayOutputStream()
+        val pre = ArrayList<ShortArray>()
+        var started = false
+        var silent = 0
+        var voiced = 0
+        var total = 0
+        var noise = 300.0
+        try {
+            rec.startRecording()
+            while (listening && my == gen) {
+                val n = rec.read(chunk, 0, chunk.size)
+                if (n <= 0) break
+                var sum = 0.0
+                for (i in 0 until n) sum += chunk[i].toDouble() * chunk[i].toDouble()
+                val rms = Math.sqrt(sum / n)
+                orb.level = (rms / 3500.0).toFloat().coerceIn(0f, 1f)
+                val loud = rms > maxOf(noise * 3.0, 700.0)
+                if (!started) {
+                    if (loud) {
+                        started = true
+                        for (p in pre) writeShorts(pcm, p, p.size)
+                        writeShorts(pcm, chunk, n)
+                        voiced = 1
+                    } else {
+                        noise = noise * 0.9 + rms * 0.1
+                        pre.add(chunk.copyOf(n))
+                        if (pre.size > 3) pre.removeAt(0)
+                    }
+                } else {
+                    writeShorts(pcm, chunk, n)
+                    total++
+                    if (loud) {
+                        silent = 0
+                        voiced++
+                    } else {
+                        silent++
+                    }
+                    if (silent >= 7 || total >= 120) break
+                }
+            }
+        } catch (e: Exception) {
+        } finally {
+            try {
+                rec.stop()
+            } catch (e: Exception) {
+            }
+            rec.release()
+            am.abandonAudioFocusRequest(focus)
         }
         orb.level = 0f
+        if (my != gen) return
+        if (started && voiced >= 3) {
+            val data = pcm.toByteArray()
+            runOnUiThread {
+                if (my == gen) {
+                    listening = false
+                    runChat(prefs.getString("key", "") ?: "", data)
+                }
+            }
+        } else {
+            runOnUiThread {
+                if (my == gen) {
+                    listening = false
+                    ui.postDelayed({ startListening() }, 200)
+                }
+            }
+        }
+    }
+
+    private fun wavOf(pcm: ByteArray): ByteArray {
+        val rate = 16000
+        val bb = ByteBuffer.allocate(44 + pcm.size).order(ByteOrder.LITTLE_ENDIAN)
+        bb.put("RIFF".toByteArray())
+        bb.putInt(36 + pcm.size)
+        bb.put("WAVE".toByteArray())
+        bb.put("fmt ".toByteArray())
+        bb.putInt(16)
+        bb.putShort(1)
+        bb.putShort(1)
+        bb.putInt(rate)
+        bb.putInt(rate * 2)
+        bb.putShort(2)
+        bb.putShort(16)
+        bb.put("data".toByteArray())
+        bb.putInt(pcm.size)
+        bb.put(pcm)
+        return bb.array()
     }
 
     private fun goBack() {
@@ -491,7 +558,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         })
         b.addView(st)
         val vst = tv("", 13f, soft)
-        b.addView(btn("কণ্ঠ বদলাও (ছেলে/মেয়ে কণ্ঠ)") {
+        b.addView(btn("কণ্ঠ বদলাও (মেয়ের কণ্ঠ বেছে নাও)") {
             val list = bnVoices()
             if (list.isEmpty()) {
                 vst.text = "ফোনে বাংলা কণ্ঠ পাওয়া যায়নি"
@@ -501,8 +568,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 val v = list[idx]
                 prefs.edit().putString("voice", v.name).apply()
                 tts?.voice = v
-                vst.text = "কণ্ঠ " + (idx + 1) + " / " + list.size + " (" + v.name + ")"
-                tts?.speak("হ্যালো সাঈদ, আমি অ্যাঞ্জেলা। আমার এই কণ্ঠটি কেমন লাগছে?", TextToSpeech.QUEUE_FLUSH, null, "demo")
+                vst.text = "কণ্ঠ " + (idx + 1) + " / " + list.size
+                tts?.speak("হ্যালো সাঈদ, আমি অ্যাঞ্জেলা। আমার কণ্ঠ কেমন লাগছে?", TextToSpeech.QUEUE_FLUSH, null, "demo")
             }
         })
         b.addView(vst)
@@ -734,7 +801,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         else
             "(সাঈদ প্রথমবার অ্যাপ খুলেছে। এক বাক্যে নিজের পরিচয় দিয়ে হ্যালো বলো।)"
         pushTurn("user", hello)
-        runChat(key)
+        runChat(key, null)
     }
 
     private fun send(text: String) {
@@ -747,10 +814,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
         pushTurn("user", text)
-        runChat(key)
+        runChat(key, null)
     }
 
-    private fun runChat(key: String) {
+    private fun runChat(key: String, audio: ByteArray?) {
         busy = true
         stopListening()
         setOrb(2)
@@ -759,7 +826,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             var r: String? = null
             var e: String? = null
             try {
-                r = callGemini(key)
+                val b64 = if (audio != null) Base64.encodeToString(wavOf(audio), Base64.NO_WRAP) else null
+                r = callGemini(key, b64)
             } catch (ex: Exception) {
                 e = ex.message ?: "অজানা সমস্যা"
             }
@@ -767,12 +835,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val errMsg = e
             runOnUiThread {
                 if (okReply == null) {
-                    if (history.length() > 0) history.remove(history.length() - 1)
+                    if (audio == null && history.length() > 0) history.remove(history.length() - 1)
                     addMsg("সমস্যা হয়েছে: $errMsg", false, false)
                     finishTurn()
                     status.text = "সমস্যা হয়েছে (মেনু → CHAT দেখো)"
                 } else {
-                    handleReply(okReply)
+                    handleReply(okReply, audio != null)
                 }
             }
         }.start()
@@ -785,13 +853,25 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return soul + "\n\n" + RULES + "\n\nমনে রাখা কথা:\n" + mem + "\n\nআজকের কাজ:\n" + tasks
     }
 
-    private fun callGemini(key: String): String {
+    private fun callGemini(key: String, audioB64: String?): String {
+        val contents = JSONArray(history.toString())
+        if (audioB64 != null) {
+            val parts = JSONArray()
+            parts.put(
+                JSONObject().put(
+                    "inline_data",
+                    JSONObject().put("mime_type", "audio/wav").put("data", audioB64)
+                )
+            )
+            parts.put(JSONObject().put("text", VOICE_NOTE))
+            contents.put(JSONObject().put("role", "user").put("parts", parts))
+        }
         val body = JSONObject()
             .put(
                 "system_instruction",
                 JSONObject().put("parts", JSONArray().put(JSONObject().put("text", buildSoul())))
             )
-            .put("contents", history)
+            .put("contents", contents)
         var lastErr = "অজানা সমস্যা"
         for (m in MODELS) {
             val url = URL("https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent")
@@ -826,12 +906,25 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         throw Exception(lastErr)
     }
 
-    private fun handleReply(raw: String) {
-        pushTurn("model", raw)
+    private fun handleReply(raw: String, voice: Boolean) {
+        var text = raw
+        if (voice) {
+            val hre = Regex("\\[\\[HEARD:(.*?)\\]\\]", RegexOption.DOT_MATCHES_ALL)
+            val heard = hre.find(text)?.groupValues?.get(1)?.trim() ?: ""
+            text = text.replace(hre, "").trim()
+            if (heard.isBlank() && text.isBlank()) {
+                finishTurn()
+                return
+            }
+            val said = if (heard.isBlank()) "(কণ্ঠে বলেছে)" else heard
+            addMsg(said, true, true)
+            pushTurn("user", said)
+        }
+        pushTurn("model", if (text.isBlank()) "ঠিক আছে" else text)
         trimHistory()
         val re = Regex("\\[\\[(\\w+):(.*?)\\]\\]")
-        val cmds = re.findAll(raw).toList()
-        val clean = raw.replace(re, "").replace("*", "").trim()
+        val cmds = re.findAll(text).toList()
+        val clean = text.replace(re, "").replace("*", "").trim()
         sphere.active = false
         if (clean.isNotEmpty()) addMsg(clean, false, true)
         if (cmds.isNotEmpty()) {
