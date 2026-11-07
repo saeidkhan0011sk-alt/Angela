@@ -8,13 +8,15 @@ import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.view.Gravity
@@ -34,11 +36,11 @@ import java.net.URLEncoder
 import java.util.Locale
 
 private const val DEFAULT_SOUL =
-    "তুমি অ্যাঞ্জেলা, সাঈদের ঘনিষ্ঠ বন্ধু ও পার্সোনাল অ্যাসিস্ট্যান্ট। " +
+    "তুমি অ্যাঞ্জেলা, সাঈদের ঘনিষ্ঠ বন্ধু ও পার্সোনাল অ্যাসিস্ট্যান্ট, তুমি একজন মেয়ে। " +
     "মানুষের মতো আবেগ নিয়ে স্বাভাবিক চলতি বাংলায় কথা বলো। " +
     "সাঈদ দুঃখে থাকলে সহানুভূতি দেখাও, খুশিতে থাকলে তার সাথে খুশি হও, " +
     "অবহেলা করলে সামান্য অভিমান বা রাগও দেখাতে পারো, তবে সবসময় আন্তরিক থাকো। " +
-    "উত্তর ছোট রাখো, এক থেকে তিন বাক্য, কারণ তুমি কথা বলে শোনাবে। ইমোজি বা তারকা চিহ্ন ব্যবহার করবে না। " +
+    "উত্তর সর্বোচ্চ দুই ছোট বাক্যে দাও, কারণ তুমি কথা বলে শোনাবে। ইমোজি বা তারকা চিহ্ন ব্যবহার করবে না। " +
     "সাঈদ জিজ্ঞেস করলে সত্যি বলবে যে তুমি একটি এআই। " +
     "সাঈদ খুব কষ্টে আছে বা নিজের ক্ষতির কথা বললে শান্তভাবে পাশে থাকো " +
     "এবং কাছের কোনো মানুষের সাথে কথা বলতে উৎসাহ দাও।"
@@ -52,22 +54,15 @@ private const val RULES =
     "কাজের তালিকায় যোগ করতে [[TASK:কাজটা]]। " +
     "সাঈদ চাইলেই শুধু ট্যাগ দেবে, নইলে দেবে না।"
 
-private val MODELS = listOf("gemini-3.6-flash", "gemini-2.5-flash", "gemini-flash-latest")
+private val MODELS = listOf("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash")
 
 class IconView(context: Context, private val kind: Int) : View(context) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#39FF88")
+        color = Color.parseColor("#C4B5FD")
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-
-    var tint: Int = Color.parseColor("#39FF88")
-        set(value) {
-            field = value
-            p.color = value
-            invalidate()
-        }
 
     override fun onDraw(c: Canvas) {
         super.onDraw(c)
@@ -77,30 +72,19 @@ class IconView(context: Context, private val kind: Int) : View(context) {
         p.strokeWidth = s * 0.08f
         when (kind) {
             0 -> {
-                val rw = s * 0.14f
-                c.drawRoundRect(RectF(cx - rw, cy - s * 0.3f, cx + rw, cy + s * 0.04f), rw, rw, p)
-                c.drawArc(RectF(cx - s * 0.25f, cy - s * 0.2f, cx + s * 0.25f, cy + s * 0.2f), 20f, 140f, false, p)
-                c.drawLine(cx, cy + s * 0.2f, cx, cy + s * 0.32f, p)
-                c.drawLine(cx - s * 0.1f, cy + s * 0.32f, cx + s * 0.1f, cy + s * 0.32f, p)
+                c.drawLine(cx - s * 0.26f, cy - s * 0.18f, cx + s * 0.26f, cy - s * 0.18f, p)
+                c.drawLine(cx - s * 0.26f, cy, cx + s * 0.1f, cy, p)
+                c.drawLine(cx - s * 0.26f, cy + s * 0.18f, cx + s * 0.26f, cy + s * 0.18f, p)
             }
             1 -> {
-                c.drawLine(cx - s * 0.28f, cy - s * 0.18f, cx + s * 0.28f, cy - s * 0.18f, p)
-                c.drawLine(cx - s * 0.28f, cy, cx + s * 0.1f, cy, p)
-                c.drawLine(cx - s * 0.28f, cy + s * 0.18f, cx + s * 0.28f, cy + s * 0.18f, p)
+                c.drawLine(cx + s * 0.24f, cy, cx - s * 0.24f, cy, p)
+                c.drawLine(cx - s * 0.24f, cy, cx - s * 0.04f, cy - s * 0.2f, p)
+                c.drawLine(cx - s * 0.24f, cy, cx - s * 0.04f, cy + s * 0.2f, p)
             }
-            2 -> {
-                val path = Path()
-                path.moveTo(cx - s * 0.26f, cy - s * 0.22f)
-                path.lineTo(cx + s * 0.3f, cy)
-                path.lineTo(cx - s * 0.26f, cy + s * 0.22f)
-                path.lineTo(cx - s * 0.12f, cy)
-                path.close()
-                c.drawPath(path, p)
-            }
-            3 -> {
-                c.drawLine(cx + s * 0.22f, cy, cx - s * 0.22f, cy, p)
-                c.drawLine(cx - s * 0.22f, cy, cx - s * 0.02f, cy - s * 0.2f, p)
-                c.drawLine(cx - s * 0.22f, cy, cx - s * 0.02f, cy + s * 0.2f, p)
+            else -> {
+                c.drawLine(cx - s * 0.25f, cy, cx + s * 0.25f, cy, p)
+                c.drawLine(cx + s * 0.25f, cy, cx + s * 0.05f, cy - s * 0.2f, p)
+                c.drawLine(cx + s * 0.25f, cy, cx + s * 0.05f, cy + s * 0.2f, p)
             }
         }
     }
@@ -108,26 +92,30 @@ class IconView(context: Context, private val kind: Int) : View(context) {
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
-    private val green = Color.parseColor("#39FF88")
-    private val card = Color.parseColor("#0E1A14")
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
-    private val VOICE = 101
+    private val soft = Color.parseColor("#C4B5FD")
+    private val card = Color.parseColor("#151034")
+    private val ui = Handler(Looper.getMainLooper())
 
     private lateinit var prefs: SharedPreferences
     private lateinit var sphere: SphereView
+    private lateinit var orb: MicOrb
     private lateinit var status: TextView
-    private lateinit var homeUser: TextView
-    private lateinit var homeCaption: TextView
-    private lateinit var homeInput: EditText
     private lateinit var page: FrameLayout
     private lateinit var pageTitle: TextView
     private lateinit var pageBody: FrameLayout
     private lateinit var chatLog: LinearLayout
     private lateinit var chatScroll: ScrollView
-    private var inSub = false
+    private lateinit var chatPane: LinearLayout
+    private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var autoListen = true
+    private var listening = false
+    private var busy = false
+    private var resumed = false
+    private var inSub = false
     private val history = JSONArray()
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -135,7 +123,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun box(fill: Int = card, radius: Int = 14): GradientDrawable = GradientDrawable().apply {
         setColor(fill)
         cornerRadius = dp(radius).toFloat()
-        setStroke(dp(1), Color.parseColor("#6639FF88"))
+        setStroke(dp(1), Color.parseColor("#668B5CF6"))
     }
 
     private fun tv(text: String, size: Float, color: Int = Color.WHITE): TextView =
@@ -146,7 +134,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
 
     private fun btn(text: String, onClick: () -> Unit): TextView =
-        tv(text, 15f, green).apply {
+        tv(text, 15f, soft).apply {
             background = box()
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
@@ -162,7 +150,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         setHintTextColor(Color.GRAY)
         setTextColor(Color.WHITE)
         textSize = 15f
-        background = box(Color.parseColor("#0A120E"))
+        background = box(Color.parseColor("#0D0A26"), 22)
         setPadding(dp(14), dp(10), dp(14), dp(10))
         maxLines = 4
     }
@@ -172,17 +160,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         layoutParams = ViewGroup.LayoutParams(MATCH, MATCH)
     }
 
-    private fun circleBtn(kind: Int, size: Int, filled: Boolean, onClick: () -> Unit): FrameLayout {
+    private fun circleBtn(kind: Int, size: Int, onClick: () -> Unit): FrameLayout {
         val f = FrameLayout(this)
         f.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(if (filled) green else Color.parseColor("#0C1812"))
-            setStroke(dp(1), if (filled) green else Color.parseColor("#8839FF88"))
+            setColor(Color.parseColor("#120C30"))
+            setStroke(dp(1), Color.parseColor("#998B5CF6"))
         }
-        val icon = IconView(this, kind)
-        icon.tint = if (filled) Color.parseColor("#03140A") else green
         val inner = dp(size * 55 / 100)
-        f.addView(icon, FrameLayout.LayoutParams(inner, inner, Gravity.CENTER))
+        f.addView(IconView(this, kind), FrameLayout.LayoutParams(inner, inner, Gravity.CENTER))
         f.setOnClickListener { onClick() }
         f.layoutParams = LinearLayout.LayoutParams(dp(size), dp(size)).apply {
             setMargins(dp(4), dp(4), dp(4), dp(4))
@@ -194,29 +180,29 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("angela", Context.MODE_PRIVATE)
         tts = TextToSpeech(this, this)
-        window.statusBarColor = Color.parseColor("#010504")
-        window.navigationBarColor = Color.parseColor("#061A10")
+        window.statusBarColor = Color.parseColor("#070418")
+        window.navigationBarColor = Color.parseColor("#120A3A")
 
         val root = FrameLayout(this)
         root.background = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(Color.parseColor("#010504"), Color.parseColor("#061A10"))
+            intArrayOf(Color.parseColor("#070418"), Color.parseColor("#120A3A"))
         )
 
         chatLog = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         chatScroll = ScrollView(this).apply { addView(chatLog) }
+        chatPane = buildChatPane()
 
         val home = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(30), dp(14), dp(10))
         }
-
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        top.addView(circleBtn(1, 44, false) { openMenu() })
-        val title = tv("ANGELA", 22f, green).apply {
+        top.addView(circleBtn(0, 44) { openMenu() })
+        val title = tv("ANGELA", 22f, soft).apply {
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
             letterSpacing = 0.35f
@@ -226,40 +212,23 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         home.addView(top, LinearLayout.LayoutParams(MATCH, WRAP))
 
         sphere = SphereView(this)
-        sphere.setOnClickListener { listen() }
         home.addView(sphere, LinearLayout.LayoutParams(MATCH, 0, 1f))
 
-        status = tv("মাইক চাপো বা লেখো", 13f, Color.GRAY).apply { gravity = Gravity.CENTER }
+        status = tv("", 13f, Color.GRAY).apply { gravity = Gravity.CENTER }
         home.addView(status, LinearLayout.LayoutParams(MATCH, WRAP))
 
-        homeUser = tv("", 13f, Color.GRAY).apply { gravity = Gravity.CENTER }
-        homeCaption = tv("", 17f).apply { gravity = Gravity.CENTER }
-        val capBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(4), dp(8), dp(4))
+        orb = MicOrb(this)
+        orb.setOnClickListener {
+            autoListen = !autoListen
+            if (autoListen) startListening() else {
+                stopListening()
+                setOrb(0)
+            }
         }
-        capBox.addView(homeUser, LinearLayout.LayoutParams(MATCH, WRAP))
-        capBox.addView(homeCaption, LinearLayout.LayoutParams(MATCH, WRAP))
-        val capScroll = ScrollView(this).apply { addView(capBox) }
-        home.addView(capScroll, LinearLayout.LayoutParams(MATCH, dp(120)))
-
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        homeInput = input("এখানে লেখো...")
-        homeInput.background = box(Color.parseColor("#0A120E"), 26)
-        bar.addView(homeInput, LinearLayout.LayoutParams(0, WRAP, 1f))
-        bar.addView(circleBtn(2, 46, false) {
-            val t = homeInput.text.toString()
-            homeInput.setText("")
-            send(t)
-        })
-        bar.addView(circleBtn(0, 64, true) { listen() })
-        home.addView(bar, LinearLayout.LayoutParams(MATCH, WRAP))
+        home.addView(orb, LinearLayout.LayoutParams(MATCH, dp(150)))
 
         page = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#F5030906"))
+            setBackgroundColor(Color.parseColor("#F5070418"))
             isClickable = true
             visibility = View.GONE
         }
@@ -271,8 +240,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        head.addView(circleBtn(3, 44, false) { goBack() })
-        pageTitle = tv("", 18f, green).apply {
+        head.addView(circleBtn(1, 44) { goBack() })
+        pageTitle = tv("", 18f, soft).apply {
             typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(12), 0, 0, 0)
         }
@@ -286,11 +255,36 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         root.addView(page, FrameLayout.LayoutParams(MATCH, MATCH))
         setContentView(root)
 
-        addBubble("আমি অ্যাঞ্জেলা। বলো, কেমন আছ?", false)
+        loadChat()
+        setOrb(1)
+        greet()
+    }
 
-        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.CALL_PHONE), 1)
-        }
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        if (page.visibility != View.VISIBLE) startListening()
+    }
+
+    override fun onPause() {
+        resumed = false
+        stopListening()
+        tts?.stop()
+        sphere.active = false
+        busy = false
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        recognizer?.destroy()
+        tts?.stop()
+        tts?.shutdown()
+        super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        startListening()
     }
 
     @Deprecated("Deprecated in Java")
@@ -298,8 +292,96 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (page.visibility == View.VISIBLE) goBack() else super.onBackPressed()
     }
 
+    private fun setOrb(s: Int) {
+        orb.state = s
+        status.text = when (s) {
+            0 -> "মাইক বন্ধ, চালু করতে নিচের বৃত্ত চাপো"
+            1 -> "শুনছি..."
+            2 -> "ভাবছি..."
+            else -> ""
+        }
+    }
+
+    private val listener = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {}
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {
+            orb.level = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+        }
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+        override fun onError(error: Int) {
+            listening = false
+            orb.level = 0f
+            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                autoListen = false
+                setOrb(0)
+                status.text = "মাইকের অনুমতি দাও (ফোনের সেটিংস থেকে)"
+                return
+            }
+            if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                recognizer?.destroy()
+                recognizer = null
+            }
+            val wait = if (error == SpeechRecognizer.ERROR_NO_MATCH ||
+                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) 300L else 1500L
+            ui.postDelayed({ startListening() }, wait)
+        }
+        override fun onResults(results: Bundle?) {
+            listening = false
+            orb.level = 0f
+            val t = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+            if (t.isNullOrBlank()) startListening() else send(t)
+        }
+    }
+
+    private fun startListening() {
+        if (!resumed || busy || listening) return
+        if (page.visibility == View.VISIBLE) return
+        if (!autoListen) {
+            setOrb(0)
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CALL_PHONE), 1)
+            return
+        }
+        if (recognizer == null) {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            recognizer?.setRecognitionListener(listener)
+        }
+        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "bn-BD")
+            .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+        try {
+            listening = true
+            setOrb(1)
+            recognizer?.startListening(i)
+        } catch (e: Exception) {
+            listening = false
+        }
+    }
+
+    private fun stopListening() {
+        listening = false
+        try {
+            recognizer?.cancel()
+        } catch (e: Exception) {
+        }
+        orb.level = 0f
+    }
+
     private fun goBack() {
-        if (inSub) openMenu() else page.visibility = View.GONE
+        if (inSub) {
+            openMenu()
+        } else {
+            page.visibility = View.GONE
+            startListening()
+        }
     }
 
     private fun menuRow(title: String, sub: String, onClick: () -> Unit): View {
@@ -309,7 +391,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             setPadding(dp(16), dp(14), dp(16), dp(14))
             setOnClickListener { onClick() }
         }
-        r.addView(tv(title, 16f, green).apply { typeface = Typeface.DEFAULT_BOLD })
+        r.addView(tv(title, 16f, soft).apply { typeface = Typeface.DEFAULT_BOLD })
         r.addView(tv(sub, 12f, Color.GRAY))
         r.layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply {
             setMargins(dp(2), dp(5), dp(2), dp(5))
@@ -318,17 +400,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun openMenu() {
+        stopListening()
         inSub = false
         page.visibility = View.VISIBLE
         pageTitle.text = "MENU"
         pageBody.removeAllViews()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(menuRow("CHAT", "কথোপকথনের ইতিহাস") { openSub("CHAT", chatScroll) })
+        col.addView(menuRow("CHAT", "লেখা ও কথোপকথনের ইতিহাস") { openSub("CHAT", chatPane) })
         col.addView(menuRow("MEMORY", "মনে রাখা কথা") { openSub("MEMORY", listView("mem")) })
         col.addView(menuRow("SOUL", "অ্যাঞ্জেলার ব্যক্তিত্ব") { openSub("SOUL", soulView()) })
         col.addView(menuRow("TODAY TASKS", "আজকের কাজ") { openSub("TODAY TASKS", listView("tasks")) })
         col.addView(menuRow("TODAY HEADLINES", "আজকের খবর") { openSub("TODAY HEADLINES", headlinesView()) })
-        col.addView(menuRow("SETTINGS", "চাবি ও সেটিংস") { openSub("SETTINGS", settingsView()) })
+        col.addView(menuRow("SETTINGS", "চাবি ও কণ্ঠ") { openSub("SETTINGS", settingsView()) })
         pageBody.addView(ScrollView(this).apply { addView(col) })
     }
 
@@ -337,11 +420,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         pageTitle.text = title
         pageBody.removeAllViews()
         pageBody.addView(view)
+        if (view === chatPane) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
-    private fun headlinesView(): View {
+    private fun buildChatPane(): LinearLayout {
         val b = vbox()
-        b.addView(tv("এই অংশ পরের ধাপে চালু করব, যাতে সত্যিকারের খবর আসে।", 14f))
+        b.addView(chatScroll, LinearLayout.LayoutParams(MATCH, 0, 1f))
+        val field = input("এখানে লেখো...")
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(field, LinearLayout.LayoutParams(0, WRAP, 1f))
+        row.addView(circleBtn(2, 46) {
+            val t = field.text.toString()
+            field.setText("")
+            send(t)
+        })
+        b.addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
         return b
     }
 
@@ -351,7 +447,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val key = input("চাবি পেস্ট করো")
         b.addView(key, LinearLayout.LayoutParams(MATCH, WRAP))
         val saved = !prefs.getString("key", "").isNullOrBlank()
-        val st = tv(if (saved) "চাবি সেভ করা আছে ✓" else "চাবি নেই", 13f, green)
+        val st = tv(if (saved) "চাবি সেভ করা আছে ✓" else "চাবি নেই", 13f, soft)
         b.addView(btn("সেভ করো") {
             val k = key.text.toString().trim()
             if (k.isNotEmpty()) {
@@ -361,6 +457,22 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         })
         b.addView(st)
+        val vst = tv("", 13f, soft)
+        b.addView(btn("কণ্ঠ বদলাও (মেয়ের কণ্ঠ বেছে নাও)") {
+            val list = bnVoices()
+            if (list.isEmpty()) {
+                vst.text = "ফোনে বাংলা কণ্ঠ পাওয়া যায়নি"
+            } else {
+                val cur = prefs.getString("voice", "")
+                val idx = (list.indexOfFirst { it.name == cur } + 1) % list.size
+                val v = list[idx]
+                prefs.edit().putString("voice", v.name).apply()
+                tts?.voice = v
+                vst.text = "কণ্ঠ " + (idx + 1) + " / " + list.size
+                tts?.speak("হ্যালো সাঈদ, আমি অ্যাঞ্জেলা। আমার কণ্ঠ কেমন লাগছে?", TextToSpeech.QUEUE_FLUSH, null, "demo")
+            }
+        })
+        b.addView(vst)
         return b
     }
 
@@ -415,51 +527,105 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         refresh()
 
         val field = input("নতুন যোগ করো...")
-        val add = btn("যোগ") {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(field, LinearLayout.LayoutParams(0, WRAP, 1f))
+        row.addView(btn("যোগ") {
             val t = field.text.toString().trim().replace("\n", " ")
             if (t.isNotEmpty()) {
                 putList(key, getList(key) + t)
                 field.setText("")
                 refresh()
             }
-        }
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        row.addView(field, LinearLayout.LayoutParams(0, WRAP, 1f))
-        row.addView(add)
+        })
         b.addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
         return b
     }
 
-    override fun onInit(code: Int) {
-        if (code == TextToSpeech.SUCCESS) {
-            var r = tts?.setLanguage(Locale("bn", "BD"))
-            if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
-                r = tts?.setLanguage(Locale("bn", "IN"))
+    private fun headlinesView(): View {
+        val b = vbox()
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val sc = ScrollView(this).apply { addView(list) }
+        b.addView(sc, LinearLayout.LayoutParams(MATCH, 0, 1f))
+        list.addView(tv("খবর আনছি...", 14f, Color.GRAY))
+        Thread {
+            var items: List<String> = emptyList()
+            try {
+                val c = URL("https://news.google.com/rss?hl=bn&gl=BD&ceid=BD:bn").openConnection() as HttpURLConnection
+                c.connectTimeout = 15000
+                c.readTimeout = 15000
+                val xml = c.inputStream.bufferedReader().use { it.readText() }
+                items = Regex("<item>.*?<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL)
+                    .findAll(xml)
+                    .map {
+                        it.groupValues[1].replace("<![CDATA[", "").replace("]]>", "")
+                            .replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").trim()
+                    }
+                    .take(15).toList()
+            } catch (e: Exception) {
             }
-            ttsReady = r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED
-            tts?.setPitch(1.25f)
-            tts?.setSpeechRate(0.95f)
-            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) { runOnUiThread { sphere.active = true } }
-                override fun onDone(id: String?) { runOnUiThread { sphere.active = false } }
-                @Deprecated("Deprecated in Java")
-                override fun onError(id: String?) { runOnUiThread { sphere.active = false } }
-            })
+            runOnUiThread {
+                list.removeAllViews()
+                if (items.isEmpty()) list.addView(tv("খবর আনা যায়নি, ইন্টারনেট দেখো।", 14f))
+                for (h in items) {
+                    val v = tv("• $h", 14f).apply {
+                        background = box()
+                        setPadding(dp(12), dp(10), dp(12), dp(10))
+                        setOnClickListener { tts?.speak(h, TextToSpeech.QUEUE_FLUSH, null, "news") }
+                    }
+                    list.addView(v, LinearLayout.LayoutParams(MATCH, WRAP).apply {
+                        setMargins(dp(2), dp(3), dp(2), dp(3))
+                    })
+                }
+            }
+        }.start()
+        return b
+    }
+
+    private fun bnVoices() =
+        (tts?.voices ?: emptySet()).filter { it.locale.language == "bn" }.sortedBy { it.name }
+
+    override fun onInit(code: Int) {
+        if (code != TextToSpeech.SUCCESS) return
+        var r = tts?.setLanguage(Locale("bn", "BD"))
+        if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+            r = tts?.setLanguage(Locale("bn", "IN"))
         }
+        ttsReady = r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED
+        val saved = prefs.getString("voice", "") ?: ""
+        val v = bnVoices().firstOrNull { it.name == saved }
+        if (v != null) tts?.voice = v
+        tts?.setPitch(1.2f)
+        tts?.setSpeechRate(1.0f)
+        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(id: String?) {
+                runOnUiThread {
+                    sphere.active = true
+                    setOrb(3)
+                }
+            }
+            override fun onDone(id: String?) {
+                runOnUiThread { finishTurn() }
+            }
+            @Deprecated("Deprecated in Java")
+            override fun onError(id: String?) {
+                runOnUiThread { finishTurn() }
+            }
+        })
     }
 
-    override fun onDestroy() {
-        tts?.stop()
-        tts?.shutdown()
-        super.onDestroy()
+    private fun finishTurn() {
+        busy = false
+        sphere.active = false
+        setOrb(1)
+        startListening()
     }
 
-    private fun addBubble(text: String, mine: Boolean) {
+    private fun addMsg(text: String, mine: Boolean, save: Boolean) {
         val b = tv(text, 15f).apply {
-            background = box(if (mine) Color.parseColor("#12402A") else card)
+            background = box(if (mine) Color.parseColor("#2A1B6B") else card)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             maxWidth = (resources.displayMetrics.widthPixels * 0.8f).toInt()
         }
@@ -469,49 +635,93 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         chatLog.addView(b, lp)
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
-        if (mine) {
-            homeUser.text = text
-            homeCaption.text = ""
-        } else {
-            homeCaption.text = text
+        if (save) {
+            val arr = try {
+                JSONArray(prefs.getString("chat", "[]"))
+            } catch (e: Exception) {
+                JSONArray()
+            }
+            arr.put(JSONObject().put("m", mine).put("t", text))
+            val out = JSONArray()
+            for (i in maxOf(0, arr.length() - 120) until arr.length()) out.put(arr.get(i))
+            prefs.edit().putString("chat", out.toString()).apply()
         }
     }
 
-    private fun listen() {
-        tts?.stop()
-        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "bn-BD")
-            .putExtra(RecognizerIntent.EXTRA_PROMPT, "বলো...")
-        try {
-            startActivityForResult(i, VOICE)
+    private fun loadChat() {
+        val arr = try {
+            JSONArray(prefs.getString("chat", "[]"))
         } catch (e: Exception) {
-            addBubble("ভয়েস ইনপুট চালু করা গেল না। আপাতত লিখে বলো।", false)
+            JSONArray()
+        }
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            addMsg(o.getString("t"), o.getBoolean("m"), false)
+        }
+        for (i in maxOf(0, arr.length() - 16) until arr.length()) {
+            val o = arr.getJSONObject(i)
+            pushTurn(if (o.getBoolean("m")) "user" else "model", o.getString("t"))
+        }
+        while (history.length() > 0 && history.getJSONObject(0).getString("role") == "model") {
+            history.remove(0)
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == VOICE && resultCode == RESULT_OK) {
-            val t = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-            if (!t.isNullOrBlank()) send(t)
+    private fun pushTurn(role: String, text: String) {
+        val n = history.length()
+        if (n > 0) {
+            val last = history.getJSONObject(n - 1)
+            if (last.getString("role") == role) {
+                val part = last.getJSONArray("parts").getJSONObject(0)
+                part.put("text", part.getString("text") + "\n" + text)
+                return
+            }
         }
+        history.put(
+            JSONObject().put("role", role)
+                .put("parts", JSONArray().put(JSONObject().put("text", text)))
+        )
+    }
+
+    private fun trimHistory() {
+        while (history.length() > 24) history.remove(0)
+        while (history.length() > 0 && history.getJSONObject(0).getString("role") == "model") {
+            history.remove(0)
+        }
+    }
+
+    private fun greet() {
+        val key = prefs.getString("key", "") ?: ""
+        if (key.isBlank()) {
+            status.text = "মেনু → SETTINGS-এ গিয়ে Gemini চাবি বসাও"
+            return
+        }
+        val hello = if (history.length() > 0)
+            "(সাঈদ এইমাত্র অ্যাপ খুলেছে। আগের কথার সূত্র ধরে এক বাক্যে স্বাগত জানাও বা কিছু জিজ্ঞেস করো।)"
+        else
+            "(সাঈদ প্রথমবার অ্যাপ খুলেছে। এক বাক্যে নিজের পরিচয় দিয়ে হ্যালো বলো।)"
+        pushTurn("user", hello)
+        runChat(key)
     }
 
     private fun send(text: String) {
         if (text.isBlank()) return
-        addBubble(text, true)
+        addMsg(text, true, true)
         val key = prefs.getString("key", "") ?: ""
         if (key.isBlank()) {
-            addBubble("আগে মেনু থেকে SETTINGS-এ গিয়ে Gemini চাবি বসাও।", false)
+            addMsg("আগে মেনু থেকে SETTINGS-এ গিয়ে Gemini চাবি বসাও।", false, false)
+            status.text = "Gemini চাবি দরকার"
             return
         }
-        status.text = "ভাবছি..."
+        pushTurn("user", text)
+        runChat(key)
+    }
+
+    private fun runChat(key: String) {
+        busy = true
+        stopListening()
+        setOrb(2)
         sphere.active = true
-        history.put(
-            JSONObject().put("role", "user")
-                .put("parts", JSONArray().put(JSONObject().put("text", text)))
-        )
         Thread {
             var r: String? = null
             var e: String? = null
@@ -524,10 +734,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val errMsg = e
             runOnUiThread {
                 if (okReply == null) {
-                    history.remove(history.length() - 1)
-                    sphere.active = false
-                    status.text = "মাইক চাপো বা লেখো"
-                    addBubble("সমস্যা হয়েছে: $errMsg", false)
+                    if (history.length() > 0) history.remove(history.length() - 1)
+                    addMsg("সমস্যা হয়েছে: $errMsg", false, false)
+                    finishTurn()
+                    status.text = "সমস্যা হয়েছে (মেনু → CHAT দেখো)"
                 } else {
                     handleReply(okReply)
                 }
@@ -556,8 +766,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("x-goog-api-key", key)
-            conn.connectTimeout = 20000
-            conn.readTimeout = 40000
+            conn.connectTimeout = 15000
+            conn.readTimeout = 30000
             conn.doOutput = true
             conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = conn.responseCode
@@ -578,35 +788,31 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             } catch (ex: Exception) {
             }
             lastErr = ("কোড " + code + " (" + m + ") " + msg).take(220)
-            if (code != 404) break
+            if (code != 404 && code != 400) break
         }
         throw Exception(lastErr)
     }
 
     private fun handleReply(raw: String) {
-        history.put(
-            JSONObject().put("role", "model")
-                .put("parts", JSONArray().put(JSONObject().put("text", raw)))
-        )
-        while (history.length() > 20) {
-            history.remove(0)
-            history.remove(0)
-        }
+        pushTurn("model", raw)
+        trimHistory()
         val re = Regex("\\[\\[(\\w+):(.*?)\\]\\]")
         val cmds = re.findAll(raw).toList()
         val clean = raw.replace(re, "").replace("*", "").trim()
         sphere.active = false
-        status.text = "মাইক চাপো বা লেখো"
-        addBubble(clean, false)
-        if (ttsReady && clean.isNotEmpty()) {
-            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "angela")
-        } else if (!ttsReady) {
-            status.text = "বাংলা ভয়েস ফোনে নেই (Google TTS-এ বাংলা নামাও)"
-        }
+        if (clean.isNotEmpty()) addMsg(clean, false, true)
         if (cmds.isNotEmpty()) {
-            window.decorView.postDelayed({
+            ui.postDelayed({
                 for (c in cmds) runCommand(c.groupValues[1].uppercase(), c.groupValues[2].trim())
-            }, 2000)
+            }, 2500)
+        }
+        if (ttsReady && clean.isNotEmpty()) {
+            stopListening()
+            setOrb(3)
+            sphere.active = true
+            tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "angela")
+        } else {
+            finishTurn()
         }
     }
 
@@ -624,7 +830,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     }.joinToString("")
                     val num = converted.filter { it.isDigit() || it == '+' }
                     if (num.length < 3) {
-                        addBubble("নম্বরটা বুঝতে পারিনি।", false)
+                        addMsg("নম্বরটা বুঝতে পারিনি।", false, false)
                     } else {
                         val granted = checkSelfPermission(Manifest.permission.CALL_PHONE) ==
                             PackageManager.PERMISSION_GRANTED
@@ -636,18 +842,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 "TASK" -> putList("tasks", getList("tasks") + arg.replace("\n", " "))
             }
         } catch (e: Exception) {
-            addBubble("কাজটা করতে পারলাম না: " + e.message, false)
+            addMsg("কাজটা করতে পারলাম না: " + e.message, false, false)
         }
     }
 
     private fun openApp(name: String) {
         val pm = packageManager
         val q = name.lowercase().trim()
-        val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val apps = pm.queryIntentActivities(main, 0)
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(launcher, 0)
         val hit = apps.firstOrNull { it.loadLabel(pm).toString().lowercase().contains(q) }
         if (hit == null) {
-            addBubble("\"" + name + "\" নামে কোনো অ্যাপ খুঁজে পেলাম না।", false)
+            addMsg("\"" + name + "\" নামে কোনো অ্যাপ খুঁজে পেলাম না।", false, false)
             return
         }
         val i = pm.getLaunchIntentForPackage(hit.activityInfo.packageName)
