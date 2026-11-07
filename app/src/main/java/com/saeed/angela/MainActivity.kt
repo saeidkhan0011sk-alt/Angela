@@ -1,6 +1,9 @@
 package com.saeed.angela
 
 import android.Manifest
+import android.app.SearchManager
+import android.provider.MediaStore
+import android.widget.ImageView
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -99,6 +102,41 @@ class IconView(context: Context, private val kind: Int) : View(context) {
     }
 }
 
+/** ছবির ওপর শতাংশ হিসেবে বোতাম বসানোর লেআউট */
+class FracLayout(context: Context) : FrameLayout(context) {
+    private val rects = HashMap<View, FloatArray>()
+
+    fun addFrac(v: View, l: Float, t: Float, r: Float, b: Float) {
+        rects[v] = floatArrayOf(l, t, r, b)
+        addView(v)
+    }
+
+    private fun ex(n: Int) = MeasureSpec.makeMeasureSpec(maxOf(n, 0), MeasureSpec.EXACTLY)
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val w = MeasureSpec.getSize(widthMeasureSpec)
+        val h = MeasureSpec.getSize(heightMeasureSpec)
+        setMeasuredDimension(w, h)
+        for (i in 0 until childCount) {
+            val c = getChildAt(i)
+            val f = rects[c]
+            if (f == null) c.measure(ex(w), ex(h))
+            else c.measure(ex(((f[2] - f[0]) * w).toInt()), ex(((f[3] - f[1]) * h).toInt()))
+        }
+    }
+
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        val w = r - l
+        val h = b - t
+        for (i in 0 until childCount) {
+            val c = getChildAt(i)
+            val f = rects[c]
+            if (f == null) c.layout(0, 0, w, h)
+            else c.layout((f[0] * w).toInt(), (f[1] * h).toInt(), (f[2] * w).toInt(), (f[3] * h).toInt())
+        }
+    }
+}
+
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
@@ -111,6 +149,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var sphere: SphereView
     private lateinit var orb: MicOrb
     private lateinit var status: TextView
+    private lateinit var micPill: TextView
     private lateinit var page: FrameLayout
     private lateinit var pageTitle: TextView
     private lateinit var pageBody: FrameLayout
@@ -189,8 +228,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("angela", Context.MODE_PRIVATE)
         tts = TextToSpeech(this, this)
-        window.statusBarColor = Color.parseColor("#070418")
-        window.navigationBarColor = Color.parseColor("#120A3A")
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
 
         val root = FrameLayout(this)
         root.background = GradientDrawable(
@@ -202,41 +245,56 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         chatScroll = ScrollView(this).apply { addView(chatLog) }
         chatPane = buildChatPane()
 
-        val home = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(30), dp(14), dp(10))
+        // নতুন হোম স্ক্রিন: ডিজাইন ছবির ওপর অদৃশ্য বোতাম বসানো
+        val home = FracLayout(this)
+        val bg = ImageView(this).apply {
+            setImageResource(R.drawable.home_bg)
+            scaleType = ImageView.ScaleType.FIT_XY
         }
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        top.addView(circleBtn(0, 44) { openMenu() })
-        val title = tv("ANGELA", 22f, soft).apply {
-            gravity = Gravity.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.35f
-        }
-        top.addView(title, LinearLayout.LayoutParams(0, WRAP, 1f))
-        top.addView(View(this), LinearLayout.LayoutParams(dp(52), dp(44)))
-        home.addView(top, LinearLayout.LayoutParams(MATCH, WRAP))
+        home.addView(bg)
 
+        // এই দুটো এখন পর্দায় দেখা যায় না, তবে কোডের ভেতরে লাগে
         sphere = SphereView(this)
-        home.addView(sphere, LinearLayout.LayoutParams(MATCH, 0, 1f))
-
-        status = tv("", 13f, Color.GRAY).apply { gravity = Gravity.CENTER }
-        home.addView(status, LinearLayout.LayoutParams(MATCH, WRAP))
-
         orb = MicOrb(this)
-        orb.setOnClickListener {
-            autoListen = !autoListen
-            if (autoListen) {
-                startListening()
-            } else {
-                stopListening()
-                setOrb(0)
-            }
+
+        // উপরে ডানে সেটিংস (গিয়ার) -> মেনু
+        hit(home, 0.80f, 0.015f, 0.95f, 0.08f) { openMenu() }
+        // বাম কার্ড: Custom AI Profile -> SOUL
+        hit(home, 0.01f, 0.187f, 0.27f, 0.348f) { openDirect("SOUL") { soulView() } }
+        // ডান কার্ড: Context Search -> CHAT
+        hit(home, 0.73f, 0.187f, 0.99f, 0.348f) { openDirect("CHAT") { chatPane } }
+        // বাম কার্ড: Voice Settings -> SETTINGS (চাবি ও কণ্ঠ)
+        hit(home, 0.01f, 0.362f, 0.27f, 0.523f) { openDirect("SETTINGS") { settingsView() } }
+        // ডান কার্ড: Task Manager -> TODAY TASKS
+        hit(home, 0.73f, 0.362f, 0.99f, 0.523f) { openDirect("TODAY TASKS") { listView("tasks") } }
+        // মাইক আইকন -> মাইক চালু/বন্ধ
+        hit(home, 0.05f, 0.552f, 0.27f, 0.71f) { toggleMic() }
+        // Data Analysis -> আজকের খবর
+        hit(home, 0.74f, 0.55f, 0.97f, 0.68f) { openDirect("TODAY HEADLINES") { headlinesView() } }
+        // মাঝের বড় বৃত্ত -> মাইক চালু/বন্ধ
+        hit(home, 0.32f, 0.75f, 0.68f, 0.91f) { toggleMic() }
+        // নিচের বাম প্যানেল: Voice Settings
+        hit(home, 0.065f, 0.794f, 0.30f, 0.91f) { openDirect("SETTINGS") { settingsView() } }
+        // নিচের ডান প্যানেল: Task Manager
+        hit(home, 0.70f, 0.794f, 0.935f, 0.91f) { openDirect("TODAY TASKS") { listView("tasks") } }
+
+        // ON/OFF সুইচ (ছবির সুইচের ওপর আসল অবস্থা দেখায়)
+        micPill = TextView(this).apply {
+            gravity = Gravity.CENTER
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener { toggleMic() }
         }
-        home.addView(orb, LinearLayout.LayoutParams(MATCH, dp(150)))
+        home.addFrac(micPill, 0.078f, 0.648f, 0.233f, 0.679f)
+        refreshMic()
+
+        // নিচের প্লেটে স্ট্যাটাস লেখা (শুনছি / ভাবছি)
+        status = tv("", 11f, Color.parseColor("#8FB8FF")).apply {
+            gravity = Gravity.CENTER
+            maxLines = 2
+            setBackgroundColor(Color.parseColor("#07102A"))
+        }
+        home.addFrac(status, 0.405f, 0.917f, 0.597f, 0.946f)
 
         page = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#F5070418"))
@@ -265,6 +323,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         root.addView(home, FrameLayout.LayoutParams(MATCH, MATCH))
         root.addView(page, FrameLayout.LayoutParams(MATCH, MATCH))
         setContentView(root)
+        root.setOnApplyWindowInsetsListener { _, ins ->
+            @Suppress("DEPRECATION")
+            pageCol.setPadding(
+                dp(14), ins.systemWindowInsetTop + dp(10),
+                dp(14), ins.systemWindowInsetBottom + dp(10)
+            )
+            ins
+        }
+        root.requestApplyInsets()
 
         loadChat()
         setOrb(1)
@@ -311,6 +378,40 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (page.visibility == View.VISIBLE) goBack() else super.onBackPressed()
+    }
+
+    private fun hit(home: FracLayout, l: Float, t: Float, r: Float, b: Float, onClick: () -> Unit) {
+        val v = View(this)
+        v.setOnClickListener { onClick() }
+        home.addFrac(v, l, t, r, b)
+    }
+
+    private fun openDirect(title: String, make: () -> View) {
+        stopListening()
+        page.visibility = View.VISIBLE
+        openSub(title, make())
+    }
+
+    private fun toggleMic() {
+        autoListen = !autoListen
+        if (autoListen) {
+            startListening()
+        } else {
+            stopListening()
+            setOrb(0)
+        }
+        refreshMic()
+    }
+
+    private fun refreshMic() {
+        val on = autoListen
+        micPill.text = if (on) "ON" else "OFF"
+        micPill.setTextColor(if (on) Color.parseColor("#FF6B6B") else Color.GRAY)
+        micPill.background = GradientDrawable().apply {
+            setColor(Color.parseColor("#0A0F24"))
+            cornerRadius = dp(16).toFloat()
+            setStroke(dp(2), if (on) Color.parseColor("#E5484D") else Color.parseColor("#555B70"))
+        }
     }
 
     private fun setOrb(s: Int) {
@@ -372,7 +473,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val minBuf = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val made: AudioRecord? = try {
             AudioRecord(
-                MediaRecorder.AudioSource.MIC, rate,
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION, rate,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
                 maxOf(minBuf, 8192)
             )
@@ -430,7 +531,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     } else {
                         silent++
                     }
-                    if (silent >= 7 || total >= 120) break
+                    if (silent >= 5 || total >= 120) break
                 }
             }
         } catch (e: Exception) {
@@ -879,7 +980,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             )
             .put("contents", contents)
         var lastErr = "অজানা সমস্যা"
-        for (m in MODELS) {
+        val savedModel = prefs.getString("model", "") ?: ""
+        val order = if (savedModel.isNotEmpty() && MODELS.contains(savedModel))
+            listOf(savedModel) + MODELS.filter { it != savedModel } else MODELS
+        for (m in order) {
+            if (m.contains("2.5")) {
+                body.put(
+                    "generationConfig",
+                    JSONObject().put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
+                )
+            } else {
+                body.remove("generationConfig")
+            }
             val url = URL("https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
@@ -898,6 +1010,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 val parts = cands.getJSONObject(0).getJSONObject("content").getJSONArray("parts")
                 val sb = StringBuilder()
                 for (i in 0 until parts.length()) sb.append(parts.getJSONObject(i).optString("text"))
+                prefs.edit().putString("model", m).apply()
                 return sb.toString()
             }
             if (code == 429) throw Exception("ফ্রি লিমিট শেষ, একটু পরে বলো")
@@ -941,7 +1054,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (cmds.isNotEmpty()) {
             ui.postDelayed({
                 for (c in cmds) runCommand(c.groupValues[1].uppercase(), c.groupValues[2].trim())
-            }, 2500)
+            }, 500)
         }
         if (ttsReady && clean.isNotEmpty()) {
             stopListening()
@@ -958,8 +1071,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             when (type) {
                 "OPEN" -> openApp(arg)
                 "YOUTUBE" -> {
-                    val u = "https://www.youtube.com/results?search_query=" + URLEncoder.encode(arg, "UTF-8")
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
+                    try {
+                        val pi = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+                        pi.setPackage("com.google.android.youtube")
+                        pi.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+                        pi.putExtra(SearchManager.QUERY, arg)
+                        pi.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(pi)
+                    } catch (e: Exception) {
+                        val u = "https://www.youtube.com/results?search_query=" + URLEncoder.encode(arg, "UTF-8")
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
+                    }
                 }
                 "CALL" -> {
                     val converted = arg.map {
