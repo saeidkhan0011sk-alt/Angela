@@ -24,8 +24,8 @@
     </queries>
 
     <application
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher"
+        android:icon="@drawable/angela_logo"
+        android:roundIcon="@drawable/angela_logo"
         android:label="Angela"
         android:theme="@style/Theme.AppCompat.NoActionBar">
         <activity
