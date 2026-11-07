@@ -1,6 +1,10 @@
 package com.saeed.angela
 
 import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -11,8 +15,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -28,6 +34,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.NotificationCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -55,6 +62,25 @@ private const val RULES =
     "সাঈদ চাইলেই শুধু ট্যাগ দেবে, নইলে দেবে না।"
 
 private val MODELS = listOf("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash")
+
+class AngelaService : Service() {
+    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): START_STICKY {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channelId = "angela_bg_channel"
+            val channel = NotificationChannel(channelId, "Angela Background Service", NotificationManager.IMPORTANCE_LOW)
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(channel)
+            val notification: Notification = NotificationCompat.Builder(this, channelId)
+                .setContentTitle("Angela Active")
+                .setContentText("অ্যাঞ্জেলা ব্যাকগ্রাউন্ডে সচল আছে...")
+                .setSmallIcon(android.R.drawable.ic_menu_mic)
+                .build()
+            startForeground(1, notification)
+        }
+        return START_STICKY
+    }
+}
 
 class IconView(context: Context, private val kind: Int) : View(context) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -182,6 +208,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         window.statusBarColor = Color.parseColor("#070418")
         window.navigationBarColor = Color.parseColor("#120A3A")
+
+        // ব্যাকগ্রাউন্ড সার্ভিস স্টার্ট করা
+        val serviceIntent = Intent(this, AngelaService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
 
         val root = FrameLayout(this)
         root.background = GradientDrawable(
@@ -458,7 +492,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         })
         b.addView(st)
         val vst = tv("", 13f, soft)
-        b.addView(btn("কণ্ঠ বদলাও (মেয়ের কণ্ঠ বেছে নাও)") {
+        b.addView(btn("কণ্ঠ বদলাও (ছেলে/মেয়ে কণ্ঠ)") {
             val list = bnVoices()
             if (list.isEmpty()) {
                 vst.text = "ফোনে বাংলা কণ্ঠ পাওয়া যায়নি"
@@ -468,8 +502,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 val v = list[idx]
                 prefs.edit().putString("voice", v.name).apply()
                 tts?.voice = v
-                vst.text = "কণ্ঠ " + (idx + 1) + " / " + list.size
-                tts?.speak("হ্যালো সাঈদ, আমি অ্যাঞ্জেলা। আমার কণ্ঠ কেমন লাগছে?", TextToSpeech.QUEUE_FLUSH, null, "demo")
+                vst.text = "কণ্ঠ " + (idx + 1) + " / " + list.size + " (" + v.name + ")"
+                tts?.speak("হ্যালো সাঈদ, আমি অ্যাঞ্জেলা। আমার এই কণ্ঠটি কেমন লাগছে?", TextToSpeech.QUEUE_FLUSH, null, "demo")
             }
         })
         b.addView(vst)
