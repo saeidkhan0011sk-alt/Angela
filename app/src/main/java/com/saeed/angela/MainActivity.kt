@@ -8,18 +8,30 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioTrack
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Base64
@@ -41,6 +53,10 @@ import java.net.URLEncoder
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 private const val DEFAULT_SOUL =
     "তুমি অ্যাঞ্জেলা, সাঈদের ঘনিষ্ঠ বন্ধু ও পার্সোনাল অ্যাসিস্ট্যান্ট, তুমি একজন মেয়ে। " +
@@ -102,6 +118,288 @@ class IconView(context: Context, private val kind: Int) : View(context) {
     }
 }
 
+/** হোম স্ক্রিনের জীবন্ত অ্যানিমেশন: মুখ, বৃত্ত, ঢেউ, কণা, ট্যাপ ইফেক্ট */
+class FxView(
+    context: Context,
+    private val stateOf: () -> Int,
+    private val levelOf: () -> Float,
+    private val micOn: () -> Boolean,
+    private val paused: () -> Boolean
+) : View(context) {
+
+    private val bmp: Bitmap = BitmapFactory.decodeResource(
+        context.resources, R.drawable.home_bg,
+        BitmapFactory.Options().apply { inScaled = false }
+    )
+    private val bw = bmp.width
+    private val bh = bmp.height
+    private val bgPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
+    private val screen = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+    private val dens = context.resources.displayMetrics.density
+    private var smooth = 0f
+    private var jaw = 0f
+    private var last = 0L
+    private var tapCount = 0
+
+    private class Ripple(val x: Float, val y: Float, val t0: Long, val hue: Float)
+
+    private val ripples = ArrayList<Ripple>()
+    private val rnd = java.util.Random(7)
+    private val n = 36
+    private val px = FloatArray(n) { rnd.nextFloat() }
+    private val py = FloatArray(n) { rnd.nextFloat() }
+    private val pv = FloatArray(n) { 0.01f + rnd.nextFloat() * 0.03f }
+    private val ps = FloatArray(n) { 0.6f + rnd.nextFloat() * 1.6f }
+    private val ovalPath = Path()
+    private val jawPath = Path()
+
+    fun ripple(xf: Float, yf: Float) {
+        ripples.add(Ripple(xf * width, yf * height, SystemClock.uptimeMillis(), (tapCount * 53f) % 360f))
+        tapCount++
+        invalidate()
+    }
+
+    private fun glow(c: Canvas, cx: Float, cy: Float, r: Float, color: Int, alpha: Int) {
+        val a = alpha.coerceIn(0, 255)
+        val c0 = Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
+        val c1 = Color.argb(0, Color.red(color), Color.green(color), Color.blue(color))
+        p.shader = RadialGradient(cx, cy, maxOf(r, 1f), c0, c1, Shader.TileMode.CLAMP)
+        p.xfermode = screen
+        p.style = Paint.Style.FILL
+        c.drawCircle(cx, cy, r, p)
+        p.shader = null
+        p.xfermode = null
+    }
+
+    private fun lerpColor(a: Int, b: Int, u: Float): Int {
+        val v = u.coerceIn(0f, 1f)
+        return Color.rgb(
+            (Color.red(a) + (Color.red(b) - Color.red(a)) * v).toInt(),
+            (Color.green(a) + (Color.green(b) - Color.green(a)) * v).toInt(),
+            (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * v).toInt()
+        )
+    }
+
+    private fun floatPart(c: Canvas, l: Float, t: Float, r: Float, b: Float, dy: Float, w: Float, h: Float) {
+        c.save()
+        c.clipRect(l * w, t * h, r * w, b * h)
+        val src = Rect((l * bw).toInt(), (t * bh).toInt(), (r * bw).toInt(), (b * bh).toInt())
+        c.drawBitmap(bmp, src, RectF(l * w, t * h + dy, r * w, b * h + dy), bgPaint)
+        c.restore()
+    }
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        val now = SystemClock.uptimeMillis()
+        val dt = if (last == 0L) 0.016f else ((now - last) / 1000f).coerceIn(0.001f, 0.05f)
+        last = now
+        val t = now / 1000f
+        val st = stateOf()
+        val on = micOn()
+        smooth += (levelOf() - smooth) * 0.35f
+        val amp: Float = when (st) {
+            1 -> if (on) smooth else 0.05f
+            3 -> 0.45f + 0.4f * abs(sin(t * 9f + sin(t * 3.7f) * 2f))
+            2 -> 0.22f
+            else -> 0.05f
+        }
+        val jawTarget = if (st == 3) 0.35f + 0.65f * abs(sin(t * 10f + sin(t * 3.3f) * 2.2f)) else 0f
+        jaw += (jawTarget - jaw) * 0.55f
+        val full = RectF(0f, 0f, w, h)
+
+        // ১. পেছনের ছবি
+        c.drawBitmap(bmp, null, full, bgPaint)
+
+        // ২. কার্ডের আইকনগুলো ভাসছে
+        val fl = 0.0035f * h
+        floatPart(c, 0.03f, 0.20f, 0.25f, 0.312f, sin(t * 1.5f) * fl, w, h)
+        floatPart(c, 0.75f, 0.20f, 0.97f, 0.312f, sin(t * 1.5f + 1.6f) * fl, w, h)
+        floatPart(c, 0.03f, 0.372f, 0.25f, 0.488f, sin(t * 1.5f + 3.2f) * fl, w, h)
+        floatPart(c, 0.75f, 0.372f, 0.97f, 0.488f, sin(t * 1.5f + 4.8f) * fl, w, h)
+
+        // ৩. অ্যাঞ্জেলার মুখ: ভাসছে, কথা বললে চোয়াল নড়ছে
+        val bob = sin(t * 1.3f) * 0.0018f * h
+        val sc = 1f + 0.003f * sin(t * 1.3f)
+        val split = 0.2545f * h
+        val open = jaw * 0.0065f * h
+        ovalPath.reset()
+        ovalPath.addOval(RectF(0.30f * w, 0.058f * h, 0.70f * w, 0.312f * h), Path.Direction.CW)
+        jawPath.reset()
+        jawPath.moveTo(0.415f * w, split)
+        jawPath.lineTo(0.595f * w, split)
+        jawPath.lineTo(0.56f * w, 0.29f * h)
+        jawPath.lineTo(0.535f * w, 0.305f * h)
+        jawPath.lineTo(0.465f * w, 0.305f * h)
+        jawPath.lineTo(0.44f * w, 0.29f * h)
+        jawPath.close()
+        c.save()
+        c.translate(0f, bob)
+        c.scale(sc, sc, 0.5f * w, 0.19f * h)
+        c.save()
+        c.clipPath(ovalPath)
+        c.clipRect(0f, 0f, w, split)
+        c.drawBitmap(bmp, null, full, bgPaint)
+        c.restore()
+        c.save()
+        c.clipPath(ovalPath)
+        c.clipRect(0f, split, w, h)
+        c.drawBitmap(bmp, null, full, bgPaint)
+        c.restore()
+        if (open > 0.6f) {
+            p.style = Paint.Style.FILL
+            p.xfermode = null
+            p.color = Color.argb(235, 6, 10, 26)
+            c.drawOval(RectF(0.463f * w, split - open * 0.6f, 0.537f * w, split + open + 1.2f), p)
+            c.save()
+            c.translate(0f, open)
+            c.clipPath(jawPath)
+            c.drawBitmap(bmp, null, full, bgPaint)
+            c.restore()
+        }
+        c.restore()
+
+        // ৪. চোখের আলো
+        val ea = (70 + 110 * amp + 40 * sin(t * 2.2f)).toInt()
+        val eyeCol = Color.rgb(90, 180, 255)
+        glow(c, 0.402f * w, 0.160f * h, 0.055f * w, eyeCol, ea)
+        glow(c, 0.596f * w, 0.160f * h, 0.055f * w, eyeCol, ea)
+
+        // ৫. মাঝের গোলক: ঘুরছে
+        val sx = 0.5f * w
+        val sy = 0.402f * h
+        val rad = 0.19f * w
+        p.xfermode = screen
+        for (i in 0 until 3) {
+            c.save()
+            c.translate(sx, sy)
+            c.rotate(t * (10f + 7f * i) + i * 55f)
+            c.scale(1f, 0.32f + 0.18f * i)
+            val rr = rad * (0.72f + 0.13f * i) * (1f + 0.05f * amp)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 1.6f * dens
+            p.color = Color.argb(110, 90, 190, 255)
+            c.drawCircle(0f, 0f, rr, p)
+            val a = t * (1.1f + 0.45f * i) + i * 2.1f
+            p.style = Paint.Style.FILL
+            p.color = Color.argb(230, 190, 230, 255)
+            c.drawCircle(rr * cos(a), rr * sin(a), 3.2f * dens, p)
+            c.restore()
+        }
+        p.xfermode = null
+        glow(c, sx, sy, rad * 0.55f * (1f + 0.25f * amp), Color.rgb(80, 170, 255), (40 + 90 * amp).toInt())
+
+        // ৬. নিচের হীরার মতো আকৃতি
+        glow(
+            c, 0.5f * w, 0.577f * h, 0.1f * w * (1f + 0.2f * sin(t * 2.4f) + 0.5f * amp),
+            Color.rgb(120, 190, 255), (50 + 80 * amp).toInt()
+        )
+
+        // ৭. মাইক আইকন: চালু থাকলে লাল আলো, বন্ধ থাকলে ঝাপসা
+        if (on) {
+            glow(
+                c, 0.159f * w, 0.598f * h, 0.13f * w * (1f + 0.5f * amp),
+                Color.rgb(255, 70, 70), (60 + 150 * amp).toInt()
+            )
+        } else {
+            p.style = Paint.Style.FILL
+            p.xfermode = null
+            p.color = Color.argb(150, 5, 8, 20)
+            c.drawCircle(0.159f * w, 0.598f * h, 0.11f * w, p)
+        }
+
+        // ৮. কথার ঢেউ: মাইকের শব্দে বা অ্যাঞ্জেলার কথায় ওপরে ওঠে
+        val cy = 0.665f * h
+        val nb = 46
+        val wx0 = 0.24f * w
+        val wx1 = 0.78f * w
+        p.xfermode = screen
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 0.0075f * w
+        for (i in 0 until nb) {
+            val u = i / (nb - 1f)
+            val env = sin(PI.toFloat() * u)
+            val noise = 0.45f + 0.55f * abs(sin(t * 6.5f + i * 0.83f) * cos(t * 3.1f + i * 0.37f))
+            val hh = (0.004f + amp * 0.052f * env * noise) * h
+            val x = wx0 + (wx1 - wx0) * u
+            p.color = lerpColor(Color.rgb(255, 80, 80), Color.rgb(80, 175, 255), (u - 0.25f) / 0.35f)
+            p.alpha = 210
+            c.drawLine(x, cy - hh, x, cy + hh, p)
+        }
+        p.xfermode = null
+
+        // ৯. নিচের বড় বৃত্ত: অবস্থা অনুযায়ী রং ও ঘোরা
+        val ox = 0.5f * w
+        val oy = 0.829f * h
+        val orad = 0.172f * w * (1f + 0.03f * amp)
+        val col = when (st) {
+            1 -> Color.rgb(56, 189, 248)
+            2 -> Color.rgb(167, 139, 250)
+            3 -> Color.rgb(52, 211, 153)
+            else -> Color.rgb(100, 116, 139)
+        }
+        glow(c, ox, oy, orad * 1.05f, col, (25 + 80 * amp).toInt())
+        val spin = t * (if (st == 2) 260f else if (st == 3) 120f else 45f)
+        val orect = RectF(ox - orad, oy - orad, ox + orad, oy + orad)
+        p.xfermode = screen
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 3f * dens
+        p.color = col
+        p.alpha = 220
+        c.drawArc(orect, spin, 70f, false, p)
+        c.drawArc(orect, spin + 180f, 70f, false, p)
+        p.xfermode = null
+
+        // ১০. ভাসমান কণা
+        p.xfermode = screen
+        p.style = Paint.Style.FILL
+        for (i in 0 until n) {
+            py[i] -= pv[i] * dt
+            if (py[i] < 0f) {
+                py[i] = 1f
+                px[i] = rnd.nextFloat()
+            }
+            val x = (px[i] + 0.012f * sin(t * 0.8f + i)) * w
+            p.color = Color.argb(120, 150, 200, 255)
+            c.drawCircle(x, py[i] * h, ps[i] * dens, p)
+        }
+        p.xfermode = null
+
+        // ১১. ট্যাপ করলে রঙের ঢেউ ও পর্দায় রঙের ঝলক
+        val iter = ripples.iterator()
+        while (iter.hasNext()) {
+            val r = iter.next()
+            val age = (now - r.t0) / 750f
+            if (age >= 1f) {
+                iter.remove()
+                continue
+            }
+            val rc = Color.HSVToColor(floatArrayOf(r.hue, 0.55f, 1f))
+            val a = ((1f - age) * 200f).toInt()
+            p.xfermode = screen
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 3f * dens
+            p.color = rc
+            p.alpha = a
+            c.drawCircle(r.x, r.y, age * 0.45f * w, p)
+            p.strokeWidth = 1.5f * dens
+            p.alpha = a / 2
+            c.drawCircle(r.x, r.y, age * 0.3f * w, p)
+            if (age < 0.45f) {
+                p.style = Paint.Style.FILL
+                p.color = rc
+                p.alpha = ((0.45f - age) / 0.45f * 38f).toInt()
+                c.drawRect(0f, 0f, w, h, p)
+            }
+            p.xfermode = null
+        }
+
+        if (!paused() || ripples.isNotEmpty()) postInvalidateOnAnimation()
+    }
+}
+
 /** ছবির ওপর শতাংশ হিসেবে বোতাম বসানোর লেআউট */
 class FracLayout(context: Context) : FrameLayout(context) {
     private val rects = HashMap<View, FloatArray>()
@@ -146,8 +444,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val ui = Handler(Looper.getMainLooper())
 
     private lateinit var prefs: SharedPreferences
-    private lateinit var sphere: SphereView
-    private lateinit var orb: MicOrb
+    private lateinit var fx: FxView
+    @Volatile private var uiState = 1
+    @Volatile private var micLevel = 0f
     private lateinit var status: TextView
     private lateinit var micPill: TextView
     private lateinit var page: FrameLayout
@@ -247,15 +546,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         // নতুন হোম স্ক্রিন: ডিজাইন ছবির ওপর অদৃশ্য বোতাম বসানো
         val home = FracLayout(this)
-        val bg = ImageView(this).apply {
-            setImageResource(R.drawable.home_bg)
-            scaleType = ImageView.ScaleType.FIT_XY
-        }
-        home.addView(bg)
-
-        // এই দুটো এখন পর্দায় দেখা যায় না, তবে কোডের ভেতরে লাগে
-        sphere = SphereView(this)
-        orb = MicOrb(this)
+        fx = FxView(this, { uiState }, { micLevel }, { autoListen }, { page.visibility == View.VISIBLE })
+        home.addView(fx)
 
         // উপরে ডানে সেটিংস (গিয়ার) -> মেনু
         hit(home, 0.80f, 0.015f, 0.95f, 0.08f) { openMenu() }
@@ -283,7 +575,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             gravity = Gravity.CENTER
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
-            setOnClickListener { toggleMic() }
+            setOnClickListener {
+                tapFx(0.155f, 0.663f)
+                toggleMic()
+            }
         }
         home.addFrac(micPill, 0.078f, 0.648f, 0.233f, 0.679f)
         refreshMic()
@@ -380,9 +675,59 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (page.visibility == View.VISIBLE) goBack() else super.onBackPressed()
     }
 
+    private fun tapFx(xf: Float, yf: Float) {
+        fx.ripple(xf, yf)
+        blip(900f, 1500f, 140)
+    }
+
+    // ছোট ইলেকট্রনিক আওয়াজ বানায়, অডিও ফোকাস নেয় না তাই ইউটিউব থামে না
+    private fun blip(f0: Float, f1: Float, ms: Int) {
+        Thread {
+            try {
+                val rate = 22050
+                val cnt = rate * ms / 1000
+                val buf = ShortArray(cnt)
+                var ph = 0.0
+                for (i in 0 until cnt) {
+                    val u = i / cnt.toDouble()
+                    val f = f0 + (f1 - f0) * u
+                    ph += 2.0 * Math.PI * f / rate
+                    val env = Math.pow(1.0 - u, 2.0) * minOf(1.0, i / 200.0)
+                    val v = (Math.sin(ph) + 0.4 * Math.sin(2.0 * ph)) * env * 7000.0
+                    buf[i] = v.toInt().toShort()
+                }
+                val at = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(rate)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(cnt * 2)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build()
+                at.write(buf, 0, cnt)
+                at.play()
+                Thread.sleep(ms + 150L)
+                at.release()
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
+
     private fun hit(home: FracLayout, l: Float, t: Float, r: Float, b: Float, onClick: () -> Unit) {
         val v = View(this)
-        v.setOnClickListener { onClick() }
+        v.setOnClickListener {
+            tapFx((l + r) / 2f, (t + b) / 2f)
+            onClick()
+        }
         home.addFrac(v, l, t, r, b)
     }
 
@@ -415,7 +760,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun setOrb(s: Int) {
-        orb.state = s
+        uiState = s
         status.text = when (s) {
             0 -> "মাইক বন্ধ, চালু করতে নিচের বৃত্ত চাপো"
             1 -> "শুনছি..."
@@ -457,7 +802,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun stopListening() {
         gen++
         listening = false
-        orb.level = 0f
+        micLevel = 0f
     }
 
     private fun writeShorts(out: ByteArrayOutputStream, buf: ShortArray, n: Int) {
@@ -509,7 +854,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 var sum = 0.0
                 for (i in 0 until n) sum += chunk[i].toDouble() * chunk[i].toDouble()
                 val rms = Math.sqrt(sum / n)
-                orb.level = (rms / 3500.0).toFloat().coerceIn(0f, 1f)
+                micLevel = (rms / 3500.0).toFloat().coerceIn(0f, 1f)
                 val loud = rms > maxOf(noise * 3.0, 700.0)
                 if (!started) {
                     if (loud) {
@@ -542,7 +887,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
             rec.release()
         }
-        orb.level = 0f
+        micLevel = 0f
         if (my != gen) return
         if (started && voiced >= 3) {
             val data = pcm.toByteArray()
@@ -587,6 +932,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             openMenu()
         } else {
             page.visibility = View.GONE
+            fx.invalidate()
             startListening()
         }
     }
@@ -809,7 +1155,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {
                 runOnUiThread {
-                    sphere.active = true
                     setOrb(3)
                 }
             }
@@ -825,7 +1170,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun finishTurn() {
         busy = false
-        sphere.active = false
         setOrb(1)
         startListening()
     }
@@ -928,7 +1272,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         busy = true
         stopListening()
         setOrb(2)
-        sphere.active = true
         Thread {
             var r: String? = null
             var e: String? = null
@@ -1049,7 +1392,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val re = Regex("\\[\\[(\\w+):(.*?)\\]\\]")
         val cmds = re.findAll(text).toList()
         val clean = text.replace(re, "").replace("*", "").trim()
-        sphere.active = false
         if (clean.isNotEmpty()) addMsg(clean, false, true)
         if (cmds.isNotEmpty()) {
             ui.postDelayed({
@@ -1059,7 +1401,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (ttsReady && clean.isNotEmpty()) {
             stopListening()
             setOrb(3)
-            sphere.active = true
             tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "angela")
         } else {
             finishTurn()
