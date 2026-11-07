@@ -65,7 +65,7 @@ private val MODELS = listOf("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "g
 
 class AngelaService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): START_STICKY {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channelId = "angela_bg_channel"
             val channel = NotificationChannel(channelId, "Angela Background Service", NotificationManager.IMPORTANCE_LOW)
@@ -209,7 +209,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         window.statusBarColor = Color.parseColor("#070418")
         window.navigationBarColor = Color.parseColor("#120A3A")
 
-        // ব্যাকগ্রাউন্ড সার্ভিস স্টার্ট করা
         val serviceIntent = Intent(this, AngelaService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
