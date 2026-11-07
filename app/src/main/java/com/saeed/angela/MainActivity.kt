@@ -10,10 +10,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.net.Uri
@@ -62,8 +59,9 @@ private const val RULES =
     "সাঈদ চাইলেই শুধু ট্যাগ দেবে, নইলে দেবে না।"
 
 private const val VOICE_NOTE =
-    "(এটা সাঈদের কণ্ঠের রেকর্ডিং। প্রথমে [[HEARD:সে যা বলেছে ঠিক তাই লেখো]] লিখবে, " +
-    "তারপর স্বাভাবিকভাবে উত্তর দেবে। অডিওতে স্পষ্ট কথা না থাকলে শুধু [[HEARD:]] লিখবে, আর কিছু না।)"
+    "(এটা সাঈদের কণ্ঠের রেকর্ডিং। প্রথমে [[HEARD:সে যা বলেছে ঠিক তাই লেখো]] লিখবে। " +
+    "এরপর সাঈদের কথা কোনোভাবেই আবার বলবে না, নকল করবে না, শুধু সরাসরি উত্তর দেবে। " +
+    "অডিওতে স্পষ্ট কথা না থাকলে শুধু [[HEARD:]] লিখবে, আর কিছু না।)"
 
 private val MODELS = listOf("gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash")
 
@@ -270,6 +268,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         loadChat()
         setOrb(1)
+
+        // ব্যাকগ্রাউন্ড থেকে অন্য অ্যাপ খুলতে "Display over other apps" পারমিশন লাগে
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+            try {
+                startActivity(
+                    Intent(
+                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            } catch (e: Exception) {
+            }
+        }
+
         greet()
     }
 
@@ -279,12 +291,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (page.visibility != View.VISIBLE) startListening()
     }
 
+    // ব্যাকগ্রাউন্ডে গেলে শোনা বন্ধ করা হয় না, ফোরগ্রাউন্ড সার্ভিস প্রসেস চালু রাখে
     override fun onPause() {
         resumed = false
-        stopListening()
-        tts?.stop()
-        sphere.active = false
-        busy = false
         super.onPause()
     }
 
@@ -315,7 +324,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun startListening() {
-        if (!resumed || busy || listening) return
+        if (busy || listening) return
         if (page.visibility == View.VISIBLE) return
         if (!autoListen) {
             setOrb(0)
@@ -323,8 +332,19 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         if (prefs.getString("key", "").isNullOrBlank()) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CALL_PHONE), 1)
+            requestPermissions(
+                arrayOf(
+                    Manifest.permission.RECORD_AUDIO,
+                    Manifest.permission.CALL_PHONE,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ), 1
+            )
             return
+        }
+        // ব্যাকগ্রাউন্ডে মাইক চালু রাখার জন্য ফোরগ্রাউন্ড সার্ভিস
+        try {
+            startForegroundService(Intent(this, AngelaService::class.java))
+        } catch (e: Exception) {
         }
         gen++
         val my = gen
@@ -348,18 +368,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun capture(my: Int) {
-        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .setOnAudioFocusChangeListener { }
-            .build()
-        am.requestAudioFocus(focus)
-
         val rate = 16000
         val minBuf = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val made: AudioRecord? = try {
@@ -373,7 +381,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         if (made == null || made.state != AudioRecord.STATE_INITIALIZED) {
             made?.release()
-            am.abandonAudioFocusRequest(focus)
             runOnUiThread {
                 if (my == gen) {
                     listening = false
@@ -433,7 +440,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             } catch (e: Exception) {
             }
             rec.release()
-            am.abandonAudioFocusRequest(focus)
         }
         orb.level = 0f
         if (my != gen) return
@@ -912,6 +918,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val hre = Regex("\\[\\[HEARD:(.*?)\\]\\]", RegexOption.DOT_MATCHES_ALL)
             val heard = hre.find(text)?.groupValues?.get(1)?.trim() ?: ""
             text = text.replace(hre, "").trim()
+            // মডেল ভুল করে সাঈদের কথা আবার বললে সেটা কেটে ফেলা
+            if (heard.isNotBlank() && text.startsWith(heard)) {
+                text = text.removePrefix(heard)
+                    .trimStart(' ', '\n', '।', ',', ':', '"', '\u201C', '\u201D')
+            }
             if (heard.isBlank() && text.isBlank()) {
                 finishTurn()
                 return
