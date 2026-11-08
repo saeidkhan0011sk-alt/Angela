@@ -460,9 +460,28 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val ui = Handler(Looper.getMainLooper())
 
     private lateinit var prefs: SharedPreferences
-    private lateinit var fx: FxView
+    private lateinit var scene: HomeScene
     @Volatile private var uiState = 1
     @Volatile private var micLevel = 0f
+    private var fromHome = false
+
+    // অ্যাঞ্জেলার কথার সাথে ঠোঁট নড়ানোর জন্য: TTS-এর শব্দ-ভিত্তিক সময় (সমর্থিত হলে), নইলে হালকা অনুকরণ
+    @Volatile private var rangeCount = 0
+    @Volatile private var lastWordAt = 0L
+    @Volatile private var wordLen = 4
+
+    private fun speechLevel(): Float {
+        if (uiState != 3) return 0f
+        val now = SystemClock.uptimeMillis()
+        val t = now / 1000f
+        if (rangeCount > 0) {
+            val age = (now - lastWordAt) / 1000f
+            val env = kotlin.math.exp(-age * 5f)
+            val sz = (0.55f + 0.08f * wordLen).coerceAtMost(1f)
+            return (env * sz * (0.65f + 0.35f * abs(sin(age * 18f)))).coerceIn(0f, 1f)
+        }
+        return 0.35f + 0.65f * abs(sin(t * 10f + sin(t * 3.3f) * 2.2f))
+    }
     private lateinit var status: TextView
     private lateinit var micPill: TextView
     private lateinit var page: FrameLayout
@@ -486,8 +505,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun box(fill: Int = card, radius: Int = 14): GradientDrawable = GradientDrawable().apply {
         setColor(fill)
         cornerRadius = dp(radius).toFloat()
-        setStroke(dp(1), Color.parseColor("#668B5CF6"))
+        setStroke(dp(1), withAlpha(accent(1), 0x99))
     }
+
+    private fun accent(i: Int): Int =
+        AngelaTheme.sets[prefs.getInt("theme", 0).coerceIn(0, AngelaTheme.sets.size - 1)][i]
+
+    private fun withAlpha(c: Int, a: Int): Int = Color.argb(a, Color.red(c), Color.green(c), Color.blue(c))
 
     private fun tv(text: String, size: Float, color: Int = Color.WHITE): TextView =
         TextView(this).apply {
@@ -560,55 +584,28 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         chatScroll = ScrollView(this).apply { addView(chatLog) }
         chatPane = buildChatPane()
 
-        // নতুন হোম স্ক্রিন: ডিজাইন ছবির ওপর অদৃশ্য বোতাম বসানো
-        val home = FracLayout(this)
-        fx = FxView(this, { uiState }, { micLevel }, { autoListen }, { page.visibility == View.VISIBLE })
-        home.addView(fx)
-
-        // উপরে ডানে সেটিংস (গিয়ার) -> মেনু
-        hit(home, 0.80f, 0.015f, 0.95f, 0.08f) { openMenu() }
-        // বাম কার্ড: Custom AI Profile -> SOUL
-        hit(home, 0.01f, 0.187f, 0.27f, 0.348f) { openDirect("SOUL") { soulView() } }
-        // ডান কার্ড: Context Search -> CHAT
-        hit(home, 0.73f, 0.187f, 0.99f, 0.348f) { openDirect("CHAT") { chatPane } }
-        // বাম কার্ড: Voice Settings -> SETTINGS (চাবি ও কণ্ঠ)
-        hit(home, 0.01f, 0.362f, 0.27f, 0.523f) { openDirect("SETTINGS") { settingsView() } }
-        // ডান কার্ড: Task Manager -> TODAY TASKS
-        hit(home, 0.73f, 0.362f, 0.99f, 0.523f) { openDirect("TODAY TASKS") { listView("tasks") } }
-        // মাইক আইকন -> মাইক চালু/বন্ধ
-        hit(home, 0.05f, 0.552f, 0.27f, 0.71f) { toggleMic() }
-        // Data Analysis -> আজকের খবর
-        hit(home, 0.74f, 0.55f, 0.97f, 0.68f) { openDirect("CHAT+") { studioView() } }
-        // মাঝের বড় বৃত্ত -> মাইক চালু/বন্ধ
-        hit(home, 0.32f, 0.75f, 0.68f, 0.91f) { toggleMic() }
-        // নিচের বাম প্যানেল: Voice Settings
-        hit(home, 0.065f, 0.794f, 0.30f, 0.91f) { openDirect("SETTINGS") { settingsView() } }
-        // নিচের ডান প্যানেল: Task Manager
-        hit(home, 0.70f, 0.794f, 0.935f, 0.91f) { openDirect("TODAY TASKS") { listView("tasks") } }
-
-        // ON/OFF সুইচ (ছবির সুইচের ওপর আসল অবস্থা দেখায়)
-        micPill = TextView(this).apply {
-            gravity = Gravity.CENTER
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setOnClickListener {
-                tapFx(0.155f, 0.663f)
-                toggleMic()
-            }
-        }
-        home.addFrac(micPill, 0.078f, 0.648f, 0.233f, 0.679f)
-        refreshMic()
-
-        // নিচের প্লেটে স্ট্যাটাস লেখা (শুনছি / ভাবছি)
-        status = tv("", 11f, Color.parseColor("#8FB8FF")).apply {
-            gravity = Gravity.CENTER
-            maxLines = 2
-            setBackgroundColor(Color.parseColor("#07102A"))
-        }
-        home.addFrac(status, 0.405f, 0.917f, 0.597f, 0.946f)
+        // নতুন প্রিমিয়াম হোম স্ক্রিন (সব কিছু কোডে আঁকা ও অ্যানিমেটেড)
+        val home = FrameLayout(this)
+        scene = HomeScene(
+            this,
+            { uiState }, { micLevel }, { speechLevel() }, { autoListen },
+            { page.visibility == View.VISIBLE },
+            { prefs.getInt("theme", 0) },
+            { prefs.getInt("intensity", 70) / 70f },
+            { prefs.getBoolean("particles", true) },
+            { prefs.getBoolean("faceanim", true) },
+            { a -> onHomeAction(a) }
+        )
+        home.addView(scene, FrameLayout.LayoutParams(MATCH, MATCH))
+        // নিচের দুটো পর্দায় দেখা যায় না, তবে কোডের ভেতরে ব্যবহার হয়
+        status = tv("", 11f, Color.GRAY)
+        micPill = TextView(this)
 
         page = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#F5070418"))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.parseColor("#F5060318"), Color.parseColor("#F5150C40"))
+            )
             isClickable = true
             visibility = View.GONE
         }
@@ -636,10 +633,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         setContentView(root)
         root.setOnApplyWindowInsetsListener { _, ins ->
             @Suppress("DEPRECATION")
-            pageCol.setPadding(
-                dp(14), ins.systemWindowInsetTop + dp(10),
-                dp(14), ins.systemWindowInsetBottom + dp(10)
-            )
+            val tI = ins.systemWindowInsetTop
+            @Suppress("DEPRECATION")
+            val bI = ins.systemWindowInsetBottom
+            val kb = bI > dp(200)
+            scene.topInset = tI.toFloat()
+            if (!kb) scene.botInset = bI.toFloat()
+            scene.invalidate()
+            pageCol.setPadding(dp(14), tI + dp(10), dp(14), dp(10))
+            val lpp = page.layoutParams as FrameLayout.LayoutParams
+            lpp.bottomMargin = if (kb) bI else bI + dp(84)
+            page.layoutParams = lpp
             ins
         }
         root.requestApplyInsets()
@@ -698,7 +702,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun tapFx(xf: Float, yf: Float) {
-        fx.ripple(xf, yf)
         blip(900f, 1500f, 140)
     }
 
@@ -756,7 +759,39 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun openDirect(title: String, make: () -> View) {
         stopListening()
         page.visibility = View.VISIBLE
+        fromHome = true
+        setNav(navFor(title))
         openSub(title, make())
+    }
+
+    private fun navFor(title: String): Int = when (title) {
+        "MEMORY" -> 1
+        "CUSTOMIZE" -> 2
+        "TODAY TASKS" -> 3
+        else -> -1
+    }
+
+    private fun setNav(i: Int) {
+        scene.navActive = i
+        scene.invalidate()
+    }
+
+    private fun onHomeAction(a: String) {
+        blip(900f, 1500f, 120)
+        when (a) {
+            "mic" -> toggleMic()
+            "chat" -> openDirect("CHAT") { chatPane }
+            "tools" -> openDirect("TOOLS") { toolsView() }
+            "menu", "nav4" -> openMenu()
+            "nav0" -> if (page.visibility == View.VISIBLE) {
+                page.visibility = View.GONE
+                setNav(0)
+                startListening()
+            }
+            "nav1" -> openDirect("MEMORY") { listView("mem") }
+            "nav2" -> openDirect("CUSTOMIZE") { customizeView() }
+            "nav3" -> openDirect("TODAY TASKS") { listView("tasks") }
+        }
     }
 
     private fun toggleMic() {
@@ -955,11 +990,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun goBack() {
-        if (inSub) {
+        if (inSub && !fromHome) {
             openMenu()
         } else {
             page.visibility = View.GONE
-            fx.invalidate()
+            setNav(0)
             startListening()
         }
     }
@@ -984,10 +1019,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         inSub = false
         page.visibility = View.VISIBLE
         pageTitle.text = "MENU"
+        fromHome = false
+        setNav(4)
         pageBody.removeAllViews()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(menuRow("CHAT", "লেখা ও কথোপকথনের ইতিহাস") { openSub("CHAT", chatPane) })
         col.addView(menuRow("CHAT+", "ছবি বিশ্লেষণ ও কোড লেখা") { openSub("CHAT+", studioView()) })
+        col.addView(menuRow("TOOLS", "সব সুবিধা এক জায়গায়") { openSub("TOOLS", toolsView()) })
+        col.addView(menuRow("CUSTOMIZE", "রং, আলো ও অ্যানিমেশন") { openSub("CUSTOMIZE", customizeView()) })
         col.addView(menuRow("MEMORY", "মনে রাখা কথা") { openSub("MEMORY", listView("mem")) })
         col.addView(menuRow("SOUL", "অ্যাঞ্জেলার ব্যক্তিত্ব") { openSub("SOUL", soulView()) })
         col.addView(menuRow("TODAY TASKS", "আজকের কাজ") { openSub("TODAY TASKS", listView("tasks")) })
@@ -1095,6 +1134,108 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         b.addView(styBtn)
 
+        return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
+    }
+
+    // ---------- CUSTOMIZE: রং, আলো ও অ্যানিমেশন ----------
+    private fun customizeView(): View {
+        val b = vbox()
+        b.addView(tv("RGB থিম বেছে নাও", 15f, soft).apply { typeface = Typeface.DEFAULT_BOLD })
+        val cur = prefs.getInt("theme", 0).coerceIn(0, AngelaTheme.sets.size - 1)
+        for (i in AngelaTheme.sets.indices) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = box(if (i == cur) Color.parseColor("#2A1B6B") else card)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                setOnClickListener {
+                    prefs.edit().putInt("theme", i).apply()
+                    openSub("CUSTOMIZE", customizeView())
+                    scene.invalidate()
+                }
+            }
+            for (cc in AngelaTheme.sets[i]) {
+                val dot = View(this)
+                dot.background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(cc)
+                }
+                row.addView(dot, LinearLayout.LayoutParams(dp(18), dp(18)).apply { setMargins(0, 0, dp(6), 0) })
+            }
+            row.addView(tv(AngelaTheme.names[i] + (if (i == cur) "  ✓" else ""), 14f).apply {
+                setPadding(dp(8), 0, 0, 0)
+            })
+            b.addView(row, LinearLayout.LayoutParams(MATCH, WRAP).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
+        }
+
+        val iv = prefs.getInt("intensity", 70).coerceIn(20, 120)
+        val il = tv("অ্যানিমেশনের তীব্রতা: " + iv + "%", 14f)
+        il.setPadding(0, dp(14), 0, 0)
+        b.addView(il)
+        val bar = SeekBar(this).apply {
+            max = 100
+            progress = iv - 20
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
+                    val v = p + 20
+                    prefs.edit().putInt("intensity", v).apply()
+                    il.text = "অ্যানিমেশনের তীব্রতা: " + v + "%"
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+        }
+        b.addView(bar, LinearLayout.LayoutParams(MATCH, WRAP))
+
+        fun toggle(key: String, name: String): TextView {
+            val t = btn("") { }
+            fun label(): String = name + ": " + (if (prefs.getBoolean(key, true)) "চালু ✓" else "বন্ধ")
+            t.text = label()
+            t.setOnClickListener {
+                prefs.edit().putBoolean(key, !prefs.getBoolean(key, true)).apply()
+                t.text = label()
+            }
+            return t
+        }
+        b.addView(toggle("particles", "ভাসমান কণা"))
+        b.addView(toggle("faceanim", "মুখ ও চোখের অ্যানিমেশন"))
+        b.addView(tv("কণা বা মুখের অ্যানিমেশন বন্ধ করলে ব্যাটারি কম খরচ হয়।", 12f, Color.GRAY))
+        return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
+    }
+
+    // ---------- TOOLS: সব সুবিধা একসাথে ----------
+    private fun toolsView(): View {
+        val b = vbox()
+        val items = listOf<Triple<String, String, () -> Unit>>(
+            Triple("CHAT+", "ছবি ও কোড", { fromHome = false; openSub("CHAT+", studioView()) }),
+            Triple("CHAT", "কথোপকথন", { fromHome = false; openSub("CHAT", chatPane) }),
+            Triple("TASKS", "আজকের কাজ", { fromHome = false; openSub("TODAY TASKS", listView("tasks")) }),
+            Triple("MEMORY", "মনে রাখা কথা", { fromHome = false; openSub("MEMORY", listView("mem")) }),
+            Triple("HEADLINES", "আজকের খবর", { fromHome = false; openSub("TODAY HEADLINES", headlinesView()) }),
+            Triple("VOICE", "কণ্ঠ ও চাবি", { fromHome = false; openSub("SETTINGS", settingsView()) }),
+            Triple("SOUL", "ব্যক্তিত্ব", { fromHome = false; openSub("SOUL", soulView()) }),
+            Triple("RGB", "রং ও আলো", { fromHome = false; openSub("CUSTOMIZE", customizeView()) })
+        )
+        var i = 0
+        while (i < items.size) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (j in i until minOf(i + 2, items.size)) {
+                val item = items[j]
+                val tile = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = box()
+                    setPadding(dp(14), dp(16), dp(14), dp(16))
+                    setOnClickListener { item.third() }
+                }
+                tile.addView(tv(item.first, 15f, soft).apply { typeface = Typeface.DEFAULT_BOLD })
+                tile.addView(tv(item.second, 12f, Color.GRAY))
+                row.addView(tile, LinearLayout.LayoutParams(0, WRAP, 1f).apply {
+                    setMargins(dp(4), dp(4), dp(4), dp(4))
+                })
+            }
+            b.addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
+            i += 2
+        }
         return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
     }
 
@@ -1449,9 +1590,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         tts?.setSpeechRate(1.0f)
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {
+                rangeCount = 0
                 runOnUiThread {
                     setOrb(3)
                 }
+            }
+            override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+                lastWordAt = SystemClock.uptimeMillis()
+                wordLen = end - start
+                rangeCount++
             }
             override fun onDone(id: String?) {
                 runOnUiThread { finishTurn() }
