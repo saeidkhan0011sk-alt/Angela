@@ -72,7 +72,8 @@ private const val DEFAULT_SOUL =
 private const val RULES =
     "ফোনের কাজ করতে হলে উত্তরের শেষে ট্যাগ দাও। " +
     "অ্যাপ খুলতে [[OPEN:অ্যাপের ইংরেজি নাম]], যেমন [[OPEN:YouTube]], [[OPEN:Free Fire]], [[OPEN:TikTok]], [[OPEN:Instagram]]। " +
-    "গান বা ভিডিও চালাতে [[YOUTUBE:সার্চের কথা]]। " +
+    "গান বা ভিডিও চালাতে [[YOUTUBE:সার্চের কথা]], এটা সরাসরি প্রথম ভিডিও চালায়। " +
+    "শুধু ইউটিউবে খুঁজে ফল দেখাতে [[YTSEARCH:সার্চের কথা]]। " +
     "কল করতে [[CALL:ইংরেজি সংখ্যায় নম্বর]]। " +
     "কিছু মনে রাখতে বললে [[MEMORY:কথাটা]]। " +
     "কাজের তালিকায় যোগ করতে [[TASK:কাজটা]]। " +
@@ -642,6 +643,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             ins
         }
         root.requestApplyInsets()
+        AngelaBus.micToggle = { runOnUiThread { toggleMic() } }
 
         loadChat()
         setOrb(1)
@@ -665,16 +667,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onResume() {
         super.onResume()
         resumed = true
+        AngelaBus.appVisible = true
+        AngelaBus.notifyChanged()
         if (page.visibility != View.VISIBLE) startListening()
     }
 
     // ব্যাকগ্রাউন্ডে গেলে শোনা বন্ধ করা হয় না, ফোরগ্রাউন্ড সার্ভিস প্রসেস চালু রাখে
     override fun onPause() {
         resumed = false
+        AngelaBus.appVisible = false
+        AngelaBus.notifyChanged()
         super.onPause()
     }
 
     override fun onDestroy() {
+        AngelaBus.micToggle = null
         tts?.stop()
         tts?.shutdown()
         super.onDestroy()
@@ -765,6 +772,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun refreshMic() {
         val on = autoListen
+        AngelaBus.micOn = on
+        AngelaBus.notifyChanged()
         micPill.text = if (on) "ON" else "OFF"
         micPill.setTextColor(if (on) Color.parseColor("#FF6B6B") else Color.GRAY)
         micPill.background = GradientDrawable().apply {
@@ -776,6 +785,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun setOrb(s: Int) {
         uiState = s
+        AngelaBus.state = s
+        AngelaBus.notifyChanged()
         status.text = when (s) {
             0 -> "মাইক বন্ধ, চালু করতে নিচের বৃত্ত চাপো"
             1 -> "শুনছি..."
@@ -786,7 +797,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun startListening() {
         if (busy || listening) return
-        if (page.visibility == View.VISIBLE) return
+        if (page.visibility == View.VISIBLE && resumed) return
         if (!autoListen) {
             setOrb(0)
             return
@@ -1699,19 +1710,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         try {
             when (type) {
                 "OPEN" -> openApp(arg)
-                "YOUTUBE" -> {
-                    try {
-                        val pi = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
-                        pi.setPackage("com.google.android.youtube")
-                        pi.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-                        pi.putExtra(SearchManager.QUERY, arg)
-                        pi.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        launch(pi)
-                    } catch (e: Exception) {
-                        val u = "https://www.youtube.com/results?search_query=" + URLEncoder.encode(arg, "UTF-8")
-                        launch(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
-                    }
-                }
+                "YOUTUBE" -> playYoutube(arg)
+                "YTSEARCH" -> youtubeSearch(arg)
                 "CALL" -> {
                     val converted = arg.map {
                         if (it.isDigit()) Character.getNumericValue(it).toString() else it.toString()
@@ -1732,6 +1732,52 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         } catch (e: Exception) {
             addMsg("কাজটা করতে পারলাম না: " + e.message, false, false)
         }
+    }
+
+    // ---------- ইউটিউব: খুঁজে প্রথম ভিডিও সরাসরি চালানো ----------
+    private fun ytLaunch(uri: String) {
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage("com.google.android.youtube")
+        try {
+            launch(i)
+        } catch (e: Exception) {
+            val web = if (uri.startsWith("vnd.youtube:"))
+                "https://www.youtube.com/watch?v=" + uri.removePrefix("vnd.youtube:") else uri
+            launch(Intent(Intent.ACTION_VIEW, Uri.parse(web)))
+        }
+    }
+
+    private fun youtubeSearch(q: String) {
+        ytLaunch("https://www.youtube.com/results?search_query=" + URLEncoder.encode(q, "UTF-8"))
+    }
+
+    private fun playYoutube(q: String) {
+        Thread {
+            var id: String? = null
+            try {
+                val u = "https://www.youtube.com/results?hl=en&search_query=" + URLEncoder.encode(q, "UTF-8")
+                val c = URL(u).openConnection() as HttpURLConnection
+                c.connectTimeout = 8000
+                c.readTimeout = 8000
+                c.setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+                )
+                c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+                c.setRequestProperty("Cookie", "CONSENT=YES+1")
+                val html = c.inputStream.bufferedReader().use { it.readText() }
+                id = Regex("\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"")
+                    .find(html)?.groupValues?.get(1)
+            } catch (e: Exception) {
+            }
+            val vid = id
+            runOnUiThread {
+                try {
+                    if (vid != null) ytLaunch("vnd.youtube:" + vid) else youtubeSearch(q)
+                } catch (e: Exception) {
+                    addMsg("ইউটিউব খুলতে পারলাম না: " + e.message, false, false)
+                }
+            }
+        }.start()
     }
 
     // ব্যাকগ্রাউন্ড থেকেও অ্যাপ খুলতে অ্যাপ-কনটেক্সট ও নতুন টাস্ক ব্যবহার হয়
