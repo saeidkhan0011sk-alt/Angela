@@ -145,323 +145,6 @@ class IconView(context: Context, private val kind: Int) : View(context) {
 /** চাবির লিমিট শেষ বা চাবি অচল হলে এই ব্যতিক্রম ওঠে, তখন পরের চাবি চেষ্টা হয় */
 class QuotaException(msg: String) : Exception(msg)
 
-/** হোম স্ক্রিনের জীবন্ত অ্যানিমেশন: মুখ, বৃত্ত, ঢেউ, কণা, ট্যাপ ইফেক্ট */
-class FxView(
-    context: Context,
-    private val stateOf: () -> Int,
-    private val levelOf: () -> Float,
-    private val micOn: () -> Boolean,
-    private val paused: () -> Boolean
-) : View(context) {
-
-    private val bmp: Bitmap = BitmapFactory.decodeResource(
-        context.resources, R.drawable.home_bg,
-        BitmapFactory.Options().apply { inScaled = false }
-    )
-    private val bw = bmp.width
-    private val bh = bmp.height
-    private val bgPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
-    private val screen = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
-    private val dens = context.resources.displayMetrics.density
-    private var smooth = 0f
-    private var jaw = 0f
-    private var last = 0L
-    private var tapCount = 0
-
-    private class Ripple(val x: Float, val y: Float, val t0: Long, val hue: Float)
-
-    private val ripples = ArrayList<Ripple>()
-    private val rnd = java.util.Random(7)
-    private val n = 36
-    private val px = FloatArray(n) { rnd.nextFloat() }
-    private val py = FloatArray(n) { rnd.nextFloat() }
-    private val pv = FloatArray(n) { 0.01f + rnd.nextFloat() * 0.03f }
-    private val ps = FloatArray(n) { 0.6f + rnd.nextFloat() * 1.6f }
-    private val ovalPath = Path()
-    private val jawPath = Path()
-
-    fun ripple(xf: Float, yf: Float) {
-        ripples.add(Ripple(xf * width, yf * height, SystemClock.uptimeMillis(), (tapCount * 53f) % 360f))
-        tapCount++
-        invalidate()
-    }
-
-    private fun glow(c: Canvas, cx: Float, cy: Float, r: Float, color: Int, alpha: Int) {
-        val a = alpha.coerceIn(0, 255)
-        val c0 = Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
-        val c1 = Color.argb(0, Color.red(color), Color.green(color), Color.blue(color))
-        p.shader = RadialGradient(cx, cy, maxOf(r, 1f), c0, c1, Shader.TileMode.CLAMP)
-        p.xfermode = screen
-        p.style = Paint.Style.FILL
-        c.drawCircle(cx, cy, r, p)
-        p.shader = null
-        p.xfermode = null
-    }
-
-    private fun lerpColor(a: Int, b: Int, u: Float): Int {
-        val v = u.coerceIn(0f, 1f)
-        return Color.rgb(
-            (Color.red(a) + (Color.red(b) - Color.red(a)) * v).toInt(),
-            (Color.green(a) + (Color.green(b) - Color.green(a)) * v).toInt(),
-            (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * v).toInt()
-        )
-    }
-
-    private fun floatPart(c: Canvas, l: Float, t: Float, r: Float, b: Float, dy: Float, w: Float, h: Float) {
-        c.save()
-        c.clipRect(l * w, t * h, r * w, b * h)
-        val src = Rect((l * bw).toInt(), (t * bh).toInt(), (r * bw).toInt(), (b * bh).toInt())
-        c.drawBitmap(bmp, src, RectF(l * w, t * h + dy, r * w, b * h + dy), bgPaint)
-        c.restore()
-    }
-
-    override fun onDraw(c: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
-        val now = SystemClock.uptimeMillis()
-        val dt = if (last == 0L) 0.016f else ((now - last) / 1000f).coerceIn(0.001f, 0.05f)
-        last = now
-        val t = now / 1000f
-        val st = stateOf()
-        val on = micOn()
-        smooth += (levelOf() - smooth) * 0.35f
-        val amp: Float = when (st) {
-            1 -> if (on) smooth else 0.05f
-            3 -> 0.45f + 0.4f * abs(sin(t * 9f + sin(t * 3.7f) * 2f))
-            2 -> 0.22f
-            else -> 0.05f
-        }
-        val jawTarget = if (st == 3) 0.35f + 0.65f * abs(sin(t * 10f + sin(t * 3.3f) * 2.2f)) else 0f
-        jaw += (jawTarget - jaw) * 0.55f
-        val full = RectF(0f, 0f, w, h)
-
-        // ১. পেছনের ছবি
-        c.drawBitmap(bmp, null, full, bgPaint)
-
-        // ২. কার্ডের আইকনগুলো ভাসছে
-        val fl = 0.0035f * h
-        floatPart(c, 0.03f, 0.20f, 0.25f, 0.312f, sin(t * 1.5f) * fl, w, h)
-        floatPart(c, 0.75f, 0.20f, 0.97f, 0.312f, sin(t * 1.5f + 1.6f) * fl, w, h)
-        floatPart(c, 0.03f, 0.372f, 0.25f, 0.488f, sin(t * 1.5f + 3.2f) * fl, w, h)
-        floatPart(c, 0.75f, 0.372f, 0.97f, 0.488f, sin(t * 1.5f + 4.8f) * fl, w, h)
-
-        // ৩. অ্যাঞ্জেলার মুখ: ভাসছে, কথা বললে চোয়াল নড়ছে
-        val bob = sin(t * 1.3f) * 0.0018f * h
-        val sc = 1f + 0.003f * sin(t * 1.3f)
-        val split = 0.2545f * h
-        val open = jaw * 0.0065f * h
-        ovalPath.reset()
-        ovalPath.addOval(RectF(0.30f * w, 0.058f * h, 0.70f * w, 0.312f * h), Path.Direction.CW)
-        jawPath.reset()
-        jawPath.moveTo(0.415f * w, split)
-        jawPath.lineTo(0.595f * w, split)
-        jawPath.lineTo(0.56f * w, 0.29f * h)
-        jawPath.lineTo(0.535f * w, 0.305f * h)
-        jawPath.lineTo(0.465f * w, 0.305f * h)
-        jawPath.lineTo(0.44f * w, 0.29f * h)
-        jawPath.close()
-        c.save()
-        c.translate(0f, bob)
-        c.scale(sc, sc, 0.5f * w, 0.19f * h)
-        c.save()
-        c.clipPath(ovalPath)
-        c.clipRect(0f, 0f, w, split)
-        c.drawBitmap(bmp, null, full, bgPaint)
-        c.restore()
-        c.save()
-        c.clipPath(ovalPath)
-        c.clipRect(0f, split, w, h)
-        c.drawBitmap(bmp, null, full, bgPaint)
-        c.restore()
-        if (open > 0.6f) {
-            p.style = Paint.Style.FILL
-            p.xfermode = null
-            p.color = Color.argb(235, 6, 10, 26)
-            c.drawOval(RectF(0.463f * w, split - open * 0.6f, 0.537f * w, split + open + 1.2f), p)
-            c.save()
-            c.translate(0f, open)
-            c.clipPath(jawPath)
-            c.drawBitmap(bmp, null, full, bgPaint)
-            c.restore()
-        }
-        c.restore()
-
-        // ৪. চোখের আলো
-        val ea = (70 + 110 * amp + 40 * sin(t * 2.2f)).toInt()
-        val eyeCol = Color.rgb(90, 180, 255)
-        glow(c, 0.402f * w, 0.160f * h, 0.055f * w, eyeCol, ea)
-        glow(c, 0.596f * w, 0.160f * h, 0.055f * w, eyeCol, ea)
-
-        // ৫. মাঝের গোলক: ঘুরছে
-        val sx = 0.5f * w
-        val sy = 0.402f * h
-        val rad = 0.19f * w
-        p.xfermode = screen
-        for (i in 0 until 3) {
-            c.save()
-            c.translate(sx, sy)
-            c.rotate(t * (10f + 7f * i) + i * 55f)
-            c.scale(1f, 0.32f + 0.18f * i)
-            val rr = rad * (0.72f + 0.13f * i) * (1f + 0.05f * amp)
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 1.6f * dens
-            p.color = Color.argb(110, 90, 190, 255)
-            c.drawCircle(0f, 0f, rr, p)
-            val a = t * (1.1f + 0.45f * i) + i * 2.1f
-            p.style = Paint.Style.FILL
-            p.color = Color.argb(230, 190, 230, 255)
-            c.drawCircle(rr * cos(a), rr * sin(a), 3.2f * dens, p)
-            c.restore()
-        }
-        p.xfermode = null
-        glow(c, sx, sy, rad * 0.55f * (1f + 0.25f * amp), Color.rgb(80, 170, 255), (40 + 90 * amp).toInt())
-
-        // ৬. নিচের হীরার মতো আকৃতি
-        glow(
-            c, 0.5f * w, 0.577f * h, 0.1f * w * (1f + 0.2f * sin(t * 2.4f) + 0.5f * amp),
-            Color.rgb(120, 190, 255), (50 + 80 * amp).toInt()
-        )
-
-        // ৭. মাইক আইকন: চালু থাকলে লাল আলো, বন্ধ থাকলে ঝাপসা
-        if (on) {
-            glow(
-                c, 0.159f * w, 0.598f * h, 0.13f * w * (1f + 0.5f * amp),
-                Color.rgb(255, 70, 70), (60 + 150 * amp).toInt()
-            )
-        } else {
-            p.style = Paint.Style.FILL
-            p.xfermode = null
-            p.color = Color.argb(150, 5, 8, 20)
-            c.drawCircle(0.159f * w, 0.598f * h, 0.11f * w, p)
-        }
-
-        // ৮. কথার ঢেউ: মাইকের শব্দে বা অ্যাঞ্জেলার কথায় ওপরে ওঠে
-        val cy = 0.665f * h
-        val nb = 46
-        val wx0 = 0.24f * w
-        val wx1 = 0.78f * w
-        p.xfermode = screen
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 0.0075f * w
-        for (i in 0 until nb) {
-            val u = i / (nb - 1f)
-            val env = sin(PI.toFloat() * u)
-            val noise = 0.45f + 0.55f * abs(sin(t * 6.5f + i * 0.83f) * cos(t * 3.1f + i * 0.37f))
-            val hh = (0.004f + amp * 0.052f * env * noise) * h
-            val x = wx0 + (wx1 - wx0) * u
-            p.color = lerpColor(Color.rgb(255, 80, 80), Color.rgb(80, 175, 255), (u - 0.25f) / 0.35f)
-            p.alpha = 210
-            c.drawLine(x, cy - hh, x, cy + hh, p)
-        }
-        p.xfermode = null
-
-        // ৯. নিচের বড় বৃত্ত: অবস্থা অনুযায়ী রং ও ঘোরা
-        val ox = 0.5f * w
-        val oy = 0.829f * h
-        val orad = 0.172f * w * (1f + 0.03f * amp)
-        val col = when (st) {
-            1 -> Color.rgb(56, 189, 248)
-            2 -> Color.rgb(167, 139, 250)
-            3 -> Color.rgb(52, 211, 153)
-            else -> Color.rgb(100, 116, 139)
-        }
-        glow(c, ox, oy, orad * 1.05f, col, (25 + 80 * amp).toInt())
-        val spin = t * (if (st == 2) 260f else if (st == 3) 120f else 45f)
-        val orect = RectF(ox - orad, oy - orad, ox + orad, oy + orad)
-        p.xfermode = screen
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 3f * dens
-        p.color = col
-        p.alpha = 220
-        c.drawArc(orect, spin, 70f, false, p)
-        c.drawArc(orect, spin + 180f, 70f, false, p)
-        p.xfermode = null
-
-        // ১০. ভাসমান কণা
-        p.xfermode = screen
-        p.style = Paint.Style.FILL
-        for (i in 0 until n) {
-            py[i] -= pv[i] * dt
-            if (py[i] < 0f) {
-                py[i] = 1f
-                px[i] = rnd.nextFloat()
-            }
-            val x = (px[i] + 0.012f * sin(t * 0.8f + i)) * w
-            p.color = Color.argb(120, 150, 200, 255)
-            c.drawCircle(x, py[i] * h, ps[i] * dens, p)
-        }
-        p.xfermode = null
-
-        // ১১. ট্যাপ করলে রঙের ঢেউ ও পর্দায় রঙের ঝলক
-        val iter = ripples.iterator()
-        while (iter.hasNext()) {
-            val r = iter.next()
-            val age = (now - r.t0) / 750f
-            if (age >= 1f) {
-                iter.remove()
-                continue
-            }
-            val rc = Color.HSVToColor(floatArrayOf(r.hue, 0.55f, 1f))
-            val a = ((1f - age) * 200f).toInt()
-            p.xfermode = screen
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 3f * dens
-            p.color = rc
-            p.alpha = a
-            c.drawCircle(r.x, r.y, age * 0.45f * w, p)
-            p.strokeWidth = 1.5f * dens
-            p.alpha = a / 2
-            c.drawCircle(r.x, r.y, age * 0.3f * w, p)
-            if (age < 0.45f) {
-                p.style = Paint.Style.FILL
-                p.color = rc
-                p.alpha = ((0.45f - age) / 0.45f * 38f).toInt()
-                c.drawRect(0f, 0f, w, h, p)
-            }
-            p.xfermode = null
-        }
-
-        if (!paused() || ripples.isNotEmpty()) postInvalidateOnAnimation()
-    }
-}
-
-/** ছবির ওপর শতাংশ হিসেবে বোতাম বসানোর লেআউট */
-class FracLayout(context: Context) : FrameLayout(context) {
-    private val rects = HashMap<View, FloatArray>()
-
-    fun addFrac(v: View, l: Float, t: Float, r: Float, b: Float) {
-        rects[v] = floatArrayOf(l, t, r, b)
-        addView(v)
-    }
-
-    private fun ex(n: Int) = MeasureSpec.makeMeasureSpec(maxOf(n, 0), MeasureSpec.EXACTLY)
-
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val w = MeasureSpec.getSize(widthMeasureSpec)
-        val h = MeasureSpec.getSize(heightMeasureSpec)
-        setMeasuredDimension(w, h)
-        for (i in 0 until childCount) {
-            val c = getChildAt(i)
-            val f = rects[c]
-            if (f == null) c.measure(ex(w), ex(h))
-            else c.measure(ex(((f[2] - f[0]) * w).toInt()), ex(((f[3] - f[1]) * h).toInt()))
-        }
-    }
-
-    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
-        val w = r - l
-        val h = b - t
-        for (i in 0 until childCount) {
-            val c = getChildAt(i)
-            val f = rects[c]
-            if (f == null) c.layout(0, 0, w, h)
-            else c.layout((f[0] * w).toInt(), (f[1] * h).toInt(), (f[2] * w).toInt(), (f[3] * h).toInt())
-        }
-    }
-}
-
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
@@ -712,10 +395,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (page.visibility == View.VISIBLE) goBack() else super.onBackPressed()
     }
 
-    private fun tapFx(xf: Float, yf: Float) {
-        blip(900f, 1500f, 140)
-    }
-
     // ছোট ইলেকট্রনিক আওয়াজ বানায়, অডিও ফোকাস নেয় না তাই ইউটিউব থামে না
     private fun blip(f0: Float, f1: Float, ms: Int) {
         Thread {
@@ -756,15 +435,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             } catch (e: Exception) {
             }
         }.start()
-    }
-
-    private fun hit(home: FracLayout, l: Float, t: Float, r: Float, b: Float, onClick: () -> Unit) {
-        val v = View(this)
-        v.setOnClickListener {
-            tapFx((l + r) / 2f, (t + b) / 2f)
-            onClick()
-        }
-        home.addFrac(v, l, t, r, b)
     }
 
     private fun openDirect(title: String, make: () -> View) {
@@ -2396,4 +2066,208 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val h = p.getOrNull(0)?.trim()?.toIntOrNull()
         val m = p.getOrNull(1)?.trim()?.toIntOrNull()
         if (h == null || m == null || h !in 0..23 || m !in 0..59) return "অ্যালার্মের সময়টা বুঝতে পারিনি"
-        val i = Intent(android.provider.AlarmCl
+        val i = Intent(android.provider.AlarmClock.ACTION_SET_ALARM)
+            .putExtra(android.provider.AlarmClock.EXTRA_HOUR, h)
+            .putExtra(android.provider.AlarmClock.EXTRA_MINUTES, m)
+            .putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, p.getOrNull(2)?.trim() ?: "Angela")
+            .putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+        launch(i)
+        return "অ্যালার্ম " + h + ":" + (if (m < 10) "0" + m else m.toString()) + " সেট করেছি"
+    }
+
+    private fun setTimer(arg: String): String {
+        val p = arg.split(":", limit = 2)
+        val sec = p.getOrNull(0)?.trim()?.toIntOrNull() ?: return "টাইমারের সময়টা বুঝতে পারিনি"
+        val i = Intent(android.provider.AlarmClock.ACTION_SET_TIMER)
+            .putExtra(android.provider.AlarmClock.EXTRA_LENGTH, sec)
+            .putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, p.getOrNull(1)?.trim() ?: "Angela")
+            .putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+        launch(i)
+        return "টাইমার " + sec + " সেকেন্ডের জন্য চালু করেছি"
+    }
+
+    private fun addCalendar(arg: String): String {
+        val p = arg.split("|")
+        if (p.size < 2) return "ইভেন্টের তারিখ-সময় বুঝতে পারিনি"
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+        val begin = fmt.parse(p[1].trim())?.time ?: return "সময়টা বুঝতে পারিনি"
+        val mins = p.getOrNull(2)?.trim()?.toLongOrNull() ?: 60L
+        val i = Intent(Intent.ACTION_INSERT)
+            .setData(android.provider.CalendarContract.Events.CONTENT_URI)
+            .putExtra(android.provider.CalendarContract.Events.TITLE, p[0].trim())
+            .putExtra(android.provider.CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
+            .putExtra(android.provider.CalendarContract.EXTRA_EVENT_END_TIME, begin + mins * 60000L)
+        launch(i)
+        return "ক্যালেন্ডারে ইভেন্টের পেজ খুলেছি, সেভ চাপলেই হবে"
+    }
+
+    private fun webTool(q: String) {
+        val key = prefs.getString("key", "") ?: ""
+        Thread {
+            val r = try {
+                val c = JSONArray().put(
+                    JSONObject().put("role", "user").put(
+                        "parts", JSONArray().put(JSONObject().put("text", q + "\n(ইন্টারনেট থেকে খুঁজে বাংলায় সংক্ষেপে উত্তর দাও।)"))
+                    )
+                )
+                callStudio(key, c, true)
+            } catch (e: Exception) {
+                "ওয়েবে খোঁজা যায়নি: " + (e.message ?: "")
+            }
+            runOnUiThread {
+                addToolResult("ওয়েব সার্চের ফল: " + r.take(1800))
+                if (!busy) deliverPending()
+            }
+        }.start()
+    }
+
+    // ইংরেজি উত্তরে ইংরেজি কণ্ঠ, বাংলায় বাংলা কণ্ঠ
+    private fun applyLang(text: String) {
+        val bnCount = text.count { it in '\u0980'..'\u09FF' }
+        val letters = text.count { it.isLetter() }
+        val want = if (letters > 0 && bnCount * 3 < letters) "en" else "bn"
+        if (want == curLang) return
+        curLang = want
+        if (want == "en") {
+            tts?.setLanguage(Locale.US)
+        } else {
+            val r = tts?.setLanguage(Locale("bn", "BD"))
+            if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                tts?.setLanguage(Locale("bn", "IN"))
+            }
+            val saved = prefs.getString("voice", "") ?: ""
+            val v = bnVoices().firstOrNull { it.name == saved }
+            if (v != null) tts?.voice = v
+        }
+    }
+
+    private fun copyBackup() {
+        val o = JSONObject()
+        for ((k, v) in prefs.all) {
+            if (v != null) o.put(k, v)
+        }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("angela-backup", o.toString()))
+        android.widget.Toast.makeText(this, "ব্যাকআপ কপি হয়েছে, Notes-এ পেস্ট করে রাখো", android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    private fun restoreBackup(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        android.app.AlertDialog.Builder(this)
+            .setMessage("ব্যাকআপ থেকে ডাটা ফিরিয়ে আনবে? একই নামের বর্তমান ডাটা বদলে যাবে।")
+            .setPositiveButton("হ্যাঁ") { _, _ ->
+                try {
+                    val o = JSONObject(t)
+                    val ed = prefs.edit()
+                    for (k in o.keys()) {
+                        when (val v = o.get(k)) {
+                            is Boolean -> ed.putBoolean(k, v)
+                            is Int -> ed.putInt(k, v)
+                            is Long -> ed.putLong(k, v)
+                            is Double -> ed.putFloat(k, v.toFloat())
+                            is String -> ed.putString(k, v)
+                        }
+                    }
+                    ed.apply()
+                    toast("রিস্টোর হয়েছে, অ্যাপ বন্ধ করে আবার খোলো")
+                } catch (e: Exception) {
+                    toast("ব্যাকআপটা ঠিক নেই")
+                }
+            }
+            .setNegativeButton("না", null)
+            .show()
+    }
+
+    private fun deviceView(): View {
+        val b = vbox()
+        val out = tv("নিচের বোতাম চাপলে ফল এখানে দেখাবে", 14f, soft)
+        out.setPadding(dp(4), dp(4), dp(4), dp(12))
+        b.addView(out)
+        fun add(label: String, type: String, arg: String) {
+            b.addView(btn(label) {
+                val r = try {
+                    runCommand(type, arg)
+                } catch (e: Exception) {
+                    "সমস্যা: " + e.message
+                }
+                out.text = r ?: "ঠিক আছে"
+            })
+        }
+        add("ব্যাটারি", "BATTERY", "")
+        add("টর্চ চালু/বন্ধ", "TORCH", "toggle")
+        add("ভলিউম বাড়াও", "VOLUME", "up")
+        add("ভলিউম কমাও", "VOLUME", "down")
+        add("ওয়াই-ফাই অবস্থা", "WIFI", "")
+        add("ওয়াই-ফাই প্যানেল খোলো", "WIFI", "open")
+        add("ব্লুটুথ অবস্থা", "BT", "")
+        add("ব্লুটুথ সেটিংস খোলো", "BT", "open")
+        return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
+    }
+
+    // ---------- ইউটিউব: খুঁজে প্রথম ভিডিও সরাসরি চালানো ----------
+    private fun ytLaunch(uri: String) {
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage("com.google.android.youtube")
+        try {
+            launch(i)
+        } catch (e: Exception) {
+            val web = if (uri.startsWith("vnd.youtube:"))
+                "https://www.youtube.com/watch?v=" + uri.removePrefix("vnd.youtube:") else uri
+            launch(Intent(Intent.ACTION_VIEW, Uri.parse(web)))
+        }
+    }
+
+    private fun youtubeSearch(q: String) {
+        ytLaunch("https://www.youtube.com/results?search_query=" + URLEncoder.encode(q, "UTF-8"))
+    }
+
+    private fun playYoutube(q: String) {
+        Thread {
+            var id: String? = null
+            try {
+                val u = "https://www.youtube.com/results?hl=en&search_query=" + URLEncoder.encode(q, "UTF-8")
+                val c = URL(u).openConnection() as HttpURLConnection
+                c.connectTimeout = 8000
+                c.readTimeout = 8000
+                c.setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+                )
+                c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+                c.setRequestProperty("Cookie", "CONSENT=YES+1")
+                val html = c.inputStream.bufferedReader().use { it.readText() }
+                id = Regex("\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"")
+                    .find(html)?.groupValues?.get(1)
+            } catch (e: Exception) {
+            }
+            val vid = id
+            runOnUiThread {
+                try {
+                    if (vid != null) ytLaunch("vnd.youtube:" + vid) else youtubeSearch(q)
+                } catch (e: Exception) {
+                    addMsg("ইউটিউব খুলতে পারলাম না: " + e.message, false, false)
+                }
+            }
+        }.start()
+    }
+
+    // ব্যাকগ্রাউন্ড থেকেও অ্যাপ খুলতে অ্যাপ-কনটেক্সট ও নতুন টাস্ক ব্যবহার হয়
+    private fun launch(i: Intent) {
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        applicationContext.startActivity(i)
+    }
+
+    private fun openApp(name: String) {
+        val pm = packageManager
+        val q = name.lowercase().trim()
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(launcher, 0)
+        val hit = apps.firstOrNull { it.loadLabel(pm).toString().lowercase().contains(q) }
+        if (hit == null) {
+            addMsg("\"" + name + "\" নামে কোনো অ্যাপ খুঁজে পেলাম না।", false, false)
+            return
+        }
+        val i = pm.getLaunchIntentForPackage(hit.activityInfo.packageName)
+        if (i != null) launch(i)
+    }
+}
