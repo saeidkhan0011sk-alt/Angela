@@ -77,7 +77,13 @@ private const val RULES =
     "কল করতে [[CALL:ইংরেজি সংখ্যায় নম্বর]]। " +
     "কিছু মনে রাখতে বললে [[MEMORY:কথাটা]]। " +
     "কাজের তালিকায় যোগ করতে [[TASK:কাজটা]]। " +
-    "সাঈদ চাইলেই শুধু ট্যাগ দেবে, নইলে দেবে না।"
+    "সাঈদ চাইলেই শুধু ট্যাগ দেবে, নইলে দেবে না। " +
+    "ফোনের তথ্য জানতে: ব্যাটারি [[BATTERY]], ওয়াই-ফাই অবস্থা [[WIFI]], ব্লুটুথ অবস্থা [[BT]]। ওয়াই-ফাই বা ব্লুটুথ সেটিংস প্যানেল খুলতে [[WIFI:open]] বা [[BT:open]]। " +
+    "টর্চ [[TORCH:on]] বা [[TORCH:off]]। ভলিউম [[VOLUME:up]], [[VOLUME:down]], [[VOLUME:60]], [[VOLUME:mute]]। " +
+    "অ্যালার্ম [[ALARM:HH:mm:নাম]] (২৪ ঘণ্টার সময়ে)। টাইমার [[TIMER:সেকেন্ড:নাম]]। " +
+    "ক্যালেন্ডারে ইভেন্ট [[CAL:শিরোনাম|yyyy-MM-dd HH:mm|মিনিট]]। ইন্টারনেটে খুঁজতে [[WEB:প্রশ্ন]]। " +
+    "তথ্য-ট্যাগের (ব্যাটারি, ওয়াই-ফাই, ব্লুটুথ, ভলিউম, ওয়েব) ফল তোমাকে পরের বার্তায় জানানো হবে, তখন সেটা দিয়ে সাঈদকে স্বাভাবিক উত্তর দাও। " +
+    "অনুবাদ, লেখা, সারাংশ, কোড ব্যাখ্যা নিজেই সরাসরি উত্তরে করো, এর জন্য ট্যাগ লাগে না।"
 
 private const val VOICE_NOTE =
     "(এটা সাঈদের কণ্ঠের রেকর্ডিং। প্রথমে [[HEARD:সে যা বলেছে ঠিক তাই লেখো]] লিখবে। " +
@@ -93,11 +99,13 @@ private val LEN_RULES = listOf(
     "উত্তর তিন থেকে পাঁচ বাক্যে দাও।",
     "প্রয়োজনে বিস্তারিত, আট থেকে দশ বাক্য পর্যন্ত উত্তর দাও।"
 )
-private val STYLE_NAMES = listOf("বন্ধুর মতো", "গম্ভীর", "মজার")
+private val STYLE_NAMES = listOf("বন্ধুর মতো", "গম্ভীর", "মজার", "পেশাদার", "সহজ-সাধারণ")
 private val STYLE_RULES = listOf(
     "আন্তরিক ঘনিষ্ঠ বন্ধুর মতো কথা বলো।",
     "শান্ত, গম্ভীর ও ভদ্র ভাষায় কথা বলো।",
-    "হালকা মজা ও রসিকতা মিশিয়ে প্রাণবন্তভাবে কথা বলো।"
+    "হালকা মজা ও রসিকতা মিশিয়ে প্রাণবন্তভাবে কথা বলো।",
+    "পেশাদার, স্পষ্ট ও সংক্ষিপ্তভাবে কথা বলো।",
+    "একদম সহজ, ঘরোয়া ও সাধারণ ভাষায় কথা বলো।"
 )
 
 class IconView(context: Context, private val kind: Int) : View(context) {
@@ -133,6 +141,9 @@ class IconView(context: Context, private val kind: Int) : View(context) {
         }
     }
 }
+
+/** চাবির লিমিট শেষ বা চাবি অচল হলে এই ব্যতিক্রম ওঠে, তখন পরের চাবি চেষ্টা হয় */
+class QuotaException(msg: String) : Exception(msg)
 
 /** হোম স্ক্রিনের জীবন্ত অ্যানিমেশন: মুখ, বৃত্ত, ঢেউ, কণা, ট্যাপ ইফেক্ট */
 class FxView(
@@ -1024,9 +1035,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         pageBody.removeAllViews()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(menuRow("CHAT", "লেখা ও কথোপকথনের ইতিহাস") { openSub("CHAT", chatPane) })
-        col.addView(menuRow("CHAT+", "ছবি বিশ্লেষণ ও কোড লেখা") { openSub("CHAT+", studioView()) })
+        col.addView(menuRow("STUDIO", "ছবি, PDF, কোড ও ওয়েব রিসার্চ") { openSub("STUDIO", studioView()) })
         col.addView(menuRow("TOOLS", "সব সুবিধা এক জায়গায়") { openSub("TOOLS", toolsView()) })
         col.addView(menuRow("CUSTOMIZE", "রং, আলো ও অ্যানিমেশন") { openSub("CUSTOMIZE", customizeView()) })
+        col.addView(menuRow("API KEYS", "Gemini চাবি যোগ ও পরিবর্তন") { openSub("API KEYS", keysView()) })
+        col.addView(menuRow("DEVICE", "ব্যাটারি, টর্চ, ভলিউম, ওয়াই-ফাই") { openSub("DEVICE", deviceView()) })
         col.addView(menuRow("MEMORY", "মনে রাখা কথা") { openSub("MEMORY", listView("mem")) })
         col.addView(menuRow("SOUL", "অ্যাঞ্জেলার ব্যক্তিত্ব") { openSub("SOUL", soulView()) })
         col.addView(menuRow("TODAY TASKS", "আজকের কাজ") { openSub("TODAY TASKS", listView("tasks")) })
@@ -1126,13 +1139,56 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         // কথা বলার ধরন
         val styBtn = btn("") { }
-        styBtn.text = "কথা বলার ধরন: " + STYLE_NAMES[prefs.getInt("style", 0).coerceIn(0, 2)]
+        styBtn.text = "কথা বলার ধরন: " + STYLE_NAMES[prefs.getInt("style", 0).coerceIn(0, STYLE_NAMES.size - 1)]
         styBtn.setOnClickListener {
-            val nx = (prefs.getInt("style", 0) + 1) % 3
+            val nx = (prefs.getInt("style", 0) + 1) % STYLE_NAMES.size
             prefs.edit().putInt("style", nx).apply()
             styBtn.text = "কথা বলার ধরন: " + STYLE_NAMES[nx]
         }
         b.addView(styBtn)
+
+        // কথার গতি ও কণ্ঠের সুর
+        fun slider(title: String, key: String, def: Int, lo: Int, hi: Int, onSet: (Int) -> Unit) {
+            val cur = prefs.getInt(key, def).coerceIn(lo, hi)
+            val lab = tv(title + ": " + cur + "%", 14f)
+            lab.setPadding(0, dp(12), 0, 0)
+            b.addView(lab)
+            b.addView(SeekBar(this).apply {
+                max = hi - lo
+                progress = cur - lo
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
+                        val v = p + lo
+                        prefs.edit().putInt(key, v).apply()
+                        lab.text = title + ": " + v + "%"
+                        onSet(v)
+                    }
+                    override fun onStartTrackingTouch(s: SeekBar?) {}
+                    override fun onStopTrackingTouch(s: SeekBar?) {}
+                })
+            }, LinearLayout.LayoutParams(MATCH, WRAP))
+        }
+        slider("কথা বলার গতি", "rate", 100, 50, 160) { tts?.setSpeechRate(it / 100f) }
+        slider("কণ্ঠের সুর (পিচ)", "pitch", 120, 70, 160) { tts?.setPitch(it / 100f) }
+        b.addView(btn("নমুনা শুনি") {
+            tts?.speak("হ্যালো সাঈদ, আমি অ্যাঞ্জেলা।", TextToSpeech.QUEUE_FLUSH, null, "demo")
+        })
+
+        // চাবি ব্যবস্থাপনা ও ব্যাকআপ
+        b.addView(tv("", 8f))
+        b.addView(btn("সব Gemini API চাবি ব্যবস্থাপনা") { openSub("API KEYS", keysView()) })
+        b.addView(btn("ডাটা ব্যাকআপ কপি করো") { copyBackup() })
+        val restoreField = input("ব্যাকআপ পেস্ট করো")
+        b.addView(restoreField, LinearLayout.LayoutParams(MATCH, WRAP))
+        b.addView(btn("ব্যাকআপ রিস্টোর করো") { restoreBackup(restoreField.text.toString()) })
+
+        // ভার্সন তথ্য
+        val vn = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (e: Exception) {
+            "1.1"
+        }
+        b.addView(tv("\nAngela AI\nVersion " + vn + "\nPersonal AI Assistant", 13f, soft))
 
         return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
     }
@@ -1207,14 +1263,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun toolsView(): View {
         val b = vbox()
         val items = listOf<Triple<String, String, () -> Unit>>(
-            Triple("CHAT+", "ছবি ও কোড", { fromHome = false; openSub("CHAT+", studioView()) }),
+            Triple("STUDIO", "ছবি, ফাইল ও কোড", { fromHome = false; openSub("STUDIO", studioView()) }),
             Triple("CHAT", "কথোপকথন", { fromHome = false; openSub("CHAT", chatPane) }),
             Triple("TASKS", "আজকের কাজ", { fromHome = false; openSub("TODAY TASKS", listView("tasks")) }),
             Triple("MEMORY", "মনে রাখা কথা", { fromHome = false; openSub("MEMORY", listView("mem")) }),
             Triple("HEADLINES", "আজকের খবর", { fromHome = false; openSub("TODAY HEADLINES", headlinesView()) }),
             Triple("VOICE", "কণ্ঠ ও চাবি", { fromHome = false; openSub("SETTINGS", settingsView()) }),
             Triple("SOUL", "ব্যক্তিত্ব", { fromHome = false; openSub("SOUL", soulView()) }),
-            Triple("RGB", "রং ও আলো", { fromHome = false; openSub("CUSTOMIZE", customizeView()) })
+            Triple("RGB", "রং ও আলো", { fromHome = false; openSub("CUSTOMIZE", customizeView()) }),
+            Triple("DEVICE", "ব্যাটারি, টর্চ, ভলিউম", { fromHome = false; openSub("DEVICE", deviceView()) }),
+            Triple("API KEYS", "Gemini চাবি", { fromHome = false; openSub("API KEYS", keysView()) })
         )
         var i = 0
         while (i < items.size) {
@@ -1246,6 +1304,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var studioNote: TextView? = null
     private var pendingImage: String? = null
     private var studioBusy = false
+    private var studioWeb = false
+    private var pendingDoc: JSONObject? = null
+    private var pendingDocText: String? = null
+    private var pendingDocName = ""
     private val studioHist = JSONArray()
 
     private fun studioView(): View {
@@ -1255,11 +1317,53 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val sc = ScrollView(this).apply { addView(log) }
         studioLog = log
         studioScroll = sc
+        try {
+            val ha = JSONArray(prefs.getString("studio_hist", "[]"))
+            for (i in 0 until ha.length()) studioHist.put(ha.get(i))
+        } catch (e: Exception) {
+        }
         b.addView(sc, LinearLayout.LayoutParams(MATCH, 0, 1f))
         val note = tv("", 12f, soft)
         studioNote = note
         b.addView(note)
         val field = input("প্রশ্ন বা কোডের অনুরোধ লেখো...")
+        fun chip(label: String, onClick: (TextView) -> Unit): TextView {
+            val t = btn(label) { }
+            t.setOnClickListener { onClick(t) }
+            return t
+        }
+        val prompts = listOf(
+            "বুঝিয়ে বলো" to "এটা বিস্তারিত বুঝিয়ে বলো।",
+            "OCR" to "এর সব লেখা হুবহু বের করো (OCR)।",
+            "অনুবাদ" to "এটা বাংলা হলে ইংরেজিতে, ইংরেজি হলে বাংলায় অনুবাদ করো।",
+            "সারাংশ" to "এর সংক্ষিপ্ত সারাংশ দাও।",
+            "ভুল খোঁজো" to "এই কোডে ভুল খুঁজে ঠিক করা কোড দাও।",
+            "ইমেইল লেখো" to "এই বিষয়ে একটা ভদ্র ইমেইল লিখে দাও: ",
+            "গ্রামার ঠিক" to "এই লেখার ভুল ঠিক করে আরও সুন্দর করে দাও: "
+        )
+        val chips1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((lab, pr) in prompts) {
+            chips1.addView(chip(lab) {
+                field.setText(pr)
+                field.setSelection(pr.length)
+            })
+        }
+        val h1 = android.widget.HorizontalScrollView(this)
+        h1.addView(chips1)
+        b.addView(h1, LinearLayout.LayoutParams(MATCH, WRAP))
+        val chips2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        chips2.addView(chip("ফাইল (PDF/টেক্সট)") { pickDoc() })
+        val webChip = chip(if (studioWeb) "ওয়েব: চালু ✓" else "ওয়েব: বন্ধ") { }
+        webChip.setOnClickListener {
+            studioWeb = !studioWeb
+            webChip.text = if (studioWeb) "ওয়েব: চালু ✓" else "ওয়েব: বন্ধ"
+        }
+        chips2.addView(webChip)
+        chips2.addView(chip("ক্লিপবোর্ড") { pasteClip(field) })
+        chips2.addView(chip("নতুন কথোপকথন") { clearStudio() })
+        val h2 = android.widget.HorizontalScrollView(this)
+        h2.addView(chips2)
+        b.addView(h2, LinearLayout.LayoutParams(MATCH, WRAP))
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1273,7 +1377,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         })
         b.addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
         studioPane = b
-        studioAdd("ছবি পাঠাও বা কোড লিখতে বলো, আমি দেখে বুঝিয়ে দেব।", false)
+        for (i in 0 until studioHist.length()) {
+            val o = studioHist.getJSONObject(i)
+            studioAdd(o.getJSONArray("parts").getJSONObject(0).optString("text"), o.getString("role") == "user")
+        }
+        studioAdd("ছবি, PDF বা কোড পাঠাও, ওয়েবে খুঁজতে বলো, আমি দেখে বুঝিয়ে দেব।", false)
         return b
     }
 
@@ -1345,6 +1453,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 78 && resultCode == RESULT_OK) {
+            data?.data?.let { handleDoc(it) }
+            return
+        }
         if (requestCode != 77 || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         Thread {
@@ -1373,33 +1485,122 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }.start()
     }
 
+    private fun pickDoc() {
+        val i = Intent(Intent.ACTION_GET_CONTENT).setType("*/*")
+        i.putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf", "text/*", "application/json", "application/xml"))
+        @Suppress("DEPRECATION")
+        startActivityForResult(i, 78)
+    }
+
+    private fun handleDoc(uri: Uri) {
+        Thread {
+            var msg = ""
+            var docJson: JSONObject? = null
+            var docText: String? = null
+            var name = "ফাইল"
+            try {
+                val mime = contentResolver.getType(uri) ?: ""
+                contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    val ix = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (ix >= 0 && c.moveToFirst()) name = c.getString(ix) ?: name
+                }
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+                val low = name.lowercase()
+                val textExt = listOf(".txt", ".md", ".json", ".csv", ".kt", ".java", ".py", ".js", ".html", ".xml", ".log")
+                if (bytes.size > 12 * 1024 * 1024) {
+                    msg = "ফাইল অনেক বড় (১২ MB-এর বেশি)"
+                } else if (mime == "application/pdf" || low.endsWith(".pdf")) {
+                    docJson = JSONObject().put("mime_type", "application/pdf")
+                        .put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                } else if (mime.startsWith("text/") || mime == "application/json" || mime == "application/xml" ||
+                    textExt.any { low.endsWith(it) }
+                ) {
+                    docText = String(bytes, Charsets.UTF_8).take(60000)
+                } else {
+                    msg = "এই ধরনের ফাইল এখনো পড়তে পারি না (PDF, টেক্সট ও কোড ফাইল পারি)"
+                }
+            } catch (e: Exception) {
+                msg = "ফাইল পড়া যায়নি"
+            }
+            val dj = docJson
+            val dt = docText
+            val nm = name
+            val ms = msg
+            runOnUiThread {
+                if (dj != null || dt != null) {
+                    pendingDoc = dj
+                    pendingDocText = dt
+                    pendingDocName = nm
+                    studioNote?.text = "ফাইল যোগ হয়েছে: " + nm + " ✓ এবার প্রশ্ন লেখো"
+                } else {
+                    studioNote?.text = ms
+                }
+            }
+        }.start()
+    }
+
+    private fun pasteClip(field: EditText) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val t = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString() ?: ""
+        if (t.isBlank()) {
+            toast("ক্লিপবোর্ড খালি")
+        } else {
+            field.setText(t.take(8000))
+            toast("ক্লিপবোর্ডের লেখা বসানো হয়েছে")
+        }
+    }
+
+    private fun clearStudio() {
+        android.app.AlertDialog.Builder(this)
+            .setMessage("এই কথোপকথন মুছে নতুন শুরু করবে?")
+            .setPositiveButton("হ্যাঁ") { _, _ ->
+                while (studioHist.length() > 0) studioHist.remove(0)
+                prefs.edit().remove("studio_hist").apply()
+                studioLog?.removeAllViews()
+                studioAdd("নতুন কথোপকথন শুরু।", false)
+            }
+            .setNegativeButton("না", null)
+            .show()
+    }
+
     private fun sendStudio(text: String) {
         val key = prefs.getString("key", "") ?: ""
-        if (key.isBlank()) {
+        if (key.isBlank() && loadKeys().isEmpty()) {
             studioAdd("আগে SETTINGS-এ Gemini চাবি বসাও।", false)
             return
         }
         if (studioBusy) return
         val img = pendingImage
+        val doc = pendingDoc
+        val docText = pendingDocText
+        val hasAttach = img != null || doc != null || docText != null
         val q = if (text.isBlank()) {
-            if (img != null) "এই ছবিটা বিস্তারিত বুঝিয়ে বলো।" else return
+            if (hasAttach) "এটা বিস্তারিত বুঝিয়ে বলো ও সারাংশ দাও।" else return
         } else text.trim()
-        studioAdd(if (img != null) "[ছবি] " + q else q, true)
+        val tag = (if (img != null) "[ছবি] " else "") +
+            (if (doc != null || docText != null) "[ফাইল: " + pendingDocName + "] " else "")
+        studioAdd(tag + q, true)
+        val docName = pendingDocName
         pendingImage = null
+        pendingDoc = null
+        pendingDocText = null
         studioNote?.text = "ভাবছি..."
         studioBusy = true
+        val web = studioWeb
         val parts = JSONArray()
         if (img != null) {
             parts.put(JSONObject().put("inline_data", JSONObject().put("mime_type", "image/jpeg").put("data", img)))
         }
-        parts.put(JSONObject().put("text", q))
+        if (doc != null) parts.put(JSONObject().put("inline_data", doc))
+        val finalQ = if (docText != null) "ফাইল (" + docName + "):\n```\n" + docText + "\n```\n\n" + q else q
+        parts.put(JSONObject().put("text", finalQ))
         val contents = JSONArray(studioHist.toString())
         contents.put(JSONObject().put("role", "user").put("parts", parts))
         Thread {
             var r: String? = null
             var e: String? = null
             try {
-                r = callStudio(key, contents)
+                r = callStudio(key, contents, web)
             } catch (ex: Exception) {
                 e = ex.message ?: "অজানা সমস্যা"
             }
@@ -1412,25 +1613,33 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     studioAdd("সমস্যা হয়েছে: $err", false)
                 } else {
                     studioAdd(ok, false)
-                    val shown = if (img != null) "[ছবি পাঠানো হয়েছিল] " + q else q
+                    val shown = tag + q
                     studioHist.put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", shown))))
                     studioHist.put(JSONObject().put("role", "model").put("parts", JSONArray().put(JSONObject().put("text", ok))))
                     while (studioHist.length() > 12) studioHist.remove(0)
                     while (studioHist.length() > 0 && studioHist.getJSONObject(0).getString("role") == "model") {
                         studioHist.remove(0)
                     }
+                    prefs.edit().putString("studio_hist", studioHist.toString()).apply()
                 }
             }
         }.start()
     }
 
-    private fun callStudio(key: String, contents: JSONArray): String {
+    private fun callStudio(key: String, contents: JSONArray, web: Boolean = false): String =
+        withKeys(key) { callStudioWith(it, contents, web) }
+
+    private fun callStudioWith(key: String, contents: JSONArray, web: Boolean): String {
         val sys = "তুমি অ্যাঞ্জেলা, সাঈদের পার্সোনাল অ্যাসিস্ট্যান্ট। ছবি পেলে মনোযোগ দিয়ে দেখে বিস্তারিত বিশ্লেষণ করে বাংলায় বুঝিয়ে দাও। " +
             "কোড চাইলে সম্পূর্ণ, সঠিক ও চালানোর উপযোগী কোড লিখবে এবং কোডটা অবশ্যই তিনটা ব্যাকটিক চিহ্নের ভেতরে ভাষার নাম দিয়ে দেবে। " +
-            "কোডের বাইরের ব্যাখ্যা বাংলায় সংক্ষিপ্ত রাখো এবং কোডটা কোথায় বসাতে হবে তা স্পষ্ট বলো। ইমোজি ব্যবহার করবে না।"
+            "কোডের বাইরের ব্যাখ্যা বাংলায় সংক্ষিপ্ত রাখো এবং কোডটা কোথায় বসাতে হবে তা স্পষ্ট বলো। ইমোজি ব্যবহার করবে না। " +
+            (if (web) "ইন্টারনেট থেকে পাওয়া তথ্য দিলে সূত্র উল্লেখ করো, আর যেটা নিশ্চিত নও সেটা স্পষ্ট বলো।" else "")
         val body = JSONObject()
             .put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sys))))
             .put("contents", contents)
+        if (web) body.put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
+        var quotaHit = false
+        var badKey = false
         var lastErr = "অজানা সমস্যা"
         for (m in STUDIO_MODELS) {
             val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent")
@@ -1451,17 +1660,36 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 val parts = cands.getJSONObject(0).getJSONObject("content").getJSONArray("parts")
                 val sb = StringBuilder()
                 for (i in 0 until parts.length()) sb.append(parts.getJSONObject(i).optString("text"))
+                if (web) {
+                    val chunks = cands.getJSONObject(0).optJSONObject("groundingMetadata")?.optJSONArray("groundingChunks")
+                    if (chunks != null && chunks.length() > 0) {
+                        sb.append("\n\nউৎস:")
+                        for (i in 0 until minOf(chunks.length(), 5)) {
+                            val wb = chunks.getJSONObject(i).optJSONObject("web")
+                            if (wb != null) sb.append("\n- " + wb.optString("title") + " (" + wb.optString("uri") + ")")
+                        }
+                    }
+                }
                 return sb.toString()
             }
-            if (code == 429) throw Exception("ফ্রি লিমিট শেষ, একটু পরে চেষ্টা করো")
+            if (code == 429) {
+                quotaHit = true
+                lastErr = "ফ্রি লিমিট শেষ"
+                continue
+            }
             var msg = ""
             try {
                 msg = JSONObject(text).getJSONObject("error").optString("message")
             } catch (ex: Exception) {
             }
             lastErr = ("কোড " + code + " (" + m + ") " + msg).take(220)
+            if (code == 403 || (code == 400 && msg.contains("API key", true))) {
+                badKey = true
+                break
+            }
             if (code != 404 && code != 400 && code != 503) break
         }
+        if (badKey || quotaHit) throw QuotaException(lastErr)
         throw Exception(lastErr)
     }
 
@@ -1586,8 +1814,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val saved = prefs.getString("voice", "") ?: ""
         val v = bnVoices().firstOrNull { it.name == saved }
         if (v != null) tts?.voice = v
-        tts?.setPitch(1.2f)
-        tts?.setSpeechRate(1.0f)
+        tts?.setPitch(prefs.getInt("pitch", 120) / 100f)
+        tts?.setSpeechRate(prefs.getInt("rate", 100) / 100f)
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {
                 rangeCount = 0
@@ -1613,6 +1841,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun finishTurn() {
         busy = false
         setOrb(1)
+        if (deliverPending()) return
         startListening()
     }
 
@@ -1699,6 +1928,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun send(text: String) {
         if (text.isBlank()) return
+        toolDepth = 0
         addMsg(text, true, true)
         val key = prefs.getString("key", "") ?: ""
         if (key.isBlank()) {
@@ -1711,6 +1941,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun runChat(key: String, audio: ByteArray?) {
+        if (audio != null) toolDepth = 0
         busy = true
         stopListening()
         setOrb(2)
@@ -1743,13 +1974,165 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val mem = getList("mem").joinToString("\n") { "- " + it }
         val tasks = getList("tasks").joinToString("\n") { "- " + it }
         val li = prefs.getInt("len", 0).coerceIn(0, 2)
-        val si = prefs.getInt("style", 0).coerceIn(0, 2)
+        val si = prefs.getInt("style", 0).coerceIn(0, STYLE_NAMES.size - 1)
         return soul + "\n\n" + RULES + "\n\nমনে রাখা কথা:\n" + mem + "\n\nআজকের কাজ:\n" + tasks +
             "\n\nউত্তরের দৈর্ঘ্য (এটা আগের সব নির্দেশের চেয়ে অগ্রাধিকার পাবে): " + LEN_RULES[li] +
-            "\nকথা বলার ধরন: " + STYLE_RULES[si]
+            "\nকথা বলার ধরন: " + STYLE_RULES[si] +
+            "\n\nএখনকার সময় (ক্যালেন্ডার/অ্যালার্মে ব্যবহার করো): " +
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm, EEEE", Locale.US).format(java.util.Date())
     }
 
-    private fun callGemini(key: String, audioB64: String?): String {
+    // ---------- একাধিক API চাবি: একটার লিমিট শেষ হলে পরেরটা ----------
+    private val coolUntil = HashMap<String, Long>()
+
+    private fun loadKeys(): MutableList<Pair<String, String>> {
+        val out = ArrayList<Pair<String, String>>()
+        try {
+            val arr = JSONArray(prefs.getString("keys_json", "[]"))
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                out.add(Pair(o.optString("n"), o.optString("k")))
+            }
+        } catch (e: Exception) {
+        }
+        val legacy = prefs.getString("key", "") ?: ""
+        if (legacy.isNotBlank() && out.none { it.second == legacy }) out.add(0, Pair("মূল চাবি", legacy))
+        return out
+    }
+
+    private fun saveKeys(list: List<Pair<String, String>>) {
+        val arr = JSONArray()
+        for (kv in list) arr.put(JSONObject().put("n", kv.first).put("k", kv.second))
+        prefs.edit().putString("keys_json", arr.toString())
+            .putString("key", list.firstOrNull()?.second ?: "").apply()
+    }
+
+    private fun <T> withKeys(first: String, block: (String) -> T): T {
+        val now = System.currentTimeMillis()
+        val list = ArrayList<String>()
+        for (kv in loadKeys()) if (kv.second.isNotBlank() && !list.contains(kv.second)) list.add(kv.second)
+        if (first.isNotBlank() && !list.contains(first)) list.add(0, first)
+        if (list.isEmpty()) throw Exception("Gemini চাবি নেই, SETTINGS-এ যোগ করো")
+        var last: Exception? = null
+        var tried = 0
+        for (k in list) {
+            if ((coolUntil[k] ?: 0L) > now) continue
+            tried++
+            try {
+                return block(k)
+            } catch (e: QuotaException) {
+                coolUntil[k] = now + 10 * 60 * 1000L
+                last = e
+            }
+        }
+        if (tried == 0) throw Exception("সব চাবির লিমিট শেষ, একটু পরে বলো বা নতুন চাবি যোগ করো")
+        if (list.size > 1) throw Exception("সব চাবির লিমিট শেষ, একটু পরে বলো বা নতুন চাবি যোগ করো")
+        throw last ?: Exception("অজানা সমস্যা")
+    }
+
+    private fun toast(s: String) {
+        android.widget.Toast.makeText(this, s, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    private fun testKey(k: String) {
+        Thread {
+            val msg = try {
+                val c = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent")
+                    .openConnection() as HttpURLConnection
+                c.requestMethod = "POST"
+                c.setRequestProperty("Content-Type", "application/json")
+                c.setRequestProperty("x-goog-api-key", k)
+                c.connectTimeout = 10000
+                c.readTimeout = 20000
+                c.doOutput = true
+                c.outputStream.use { it.write("{\"contents\":[{\"parts\":[{\"text\":\"hi\"}]}]}".toByteArray()) }
+                when (val code = c.responseCode) {
+                    in 200..299 -> "চাবি ঠিক আছে ✓"
+                    429 -> "চাবি ঠিক, কিন্তু এখন লিমিট শেষ"
+                    else -> "সমস্যা: কোড " + code
+                }
+            } catch (e: Exception) {
+                "পরীক্ষা হয়নি: " + (e.message ?: "")
+            }
+            runOnUiThread { toast(msg) }
+        }.start()
+    }
+
+    private fun keysView(): View {
+        val b = vbox()
+        b.addView(tv("একটা চাবির লিমিট শেষ হলে পরেরটা নিজে থেকেই চলবে। ★ মানে প্রধান চাবি।", 13f, soft))
+        val listBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun refresh() {
+            listBox.removeAllViews()
+            val ks = loadKeys()
+            if (ks.isEmpty()) listBox.addView(tv("কোনো চাবি নেই। নিচে যোগ করো।", 14f))
+            for ((i, kv) in ks.withIndex()) {
+                val k = kv.second
+                val cool = (coolUntil[k] ?: 0L) > System.currentTimeMillis()
+                val masked = if (k.length > 10) k.take(6) + "••••" + k.takeLast(4) else "••••"
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = box()
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                }
+                row.addView(tv((if (i == 0) "★ " else "") + kv.first + "   " + masked + (if (cool) "   (লিমিটে, বিশ্রাম)" else ""), 13f))
+                val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                if (i != 0) {
+                    btns.addView(btn("প্রধান করো") {
+                        val l = loadKeys()
+                        val moved = l.removeAt(i)
+                        l.add(0, moved)
+                        saveKeys(l)
+                        refresh()
+                    })
+                }
+                btns.addView(btn("পরীক্ষা") { testKey(k) })
+                btns.addView(btn("মুছো") {
+                    android.app.AlertDialog.Builder(this)
+                        .setMessage("এই চাবিটা মুছবে?")
+                        .setPositiveButton("হ্যাঁ") { _, _ ->
+                            val l = loadKeys()
+                            l.removeAll { it.second == k }
+                            saveKeys(l)
+                            refresh()
+                        }
+                        .setNegativeButton("না", null)
+                        .show()
+                })
+                row.addView(btns)
+                listBox.addView(row, LinearLayout.LayoutParams(MATCH, WRAP).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
+            }
+        }
+        refresh()
+        b.addView(listBox)
+        b.addView(tv("নতুন চাবি যোগ করো", 14f, soft).apply { setPadding(0, dp(12), 0, 0) })
+        val nameF = input("নাম (যেমন: দ্বিতীয় চাবি)")
+        val keyF = input("নতুন API চাবি পেস্ট করো")
+        b.addView(nameF, LinearLayout.LayoutParams(MATCH, WRAP).apply { setMargins(0, dp(4), 0, dp(4)) })
+        b.addView(keyF, LinearLayout.LayoutParams(MATCH, WRAP).apply { setMargins(0, dp(4), 0, dp(4)) })
+        b.addView(btn("চাবি যোগ করো") {
+            val k = keyF.text.toString().trim()
+            val l = loadKeys()
+            if (k.length < 20) {
+                toast("চাবিটা ঠিক মনে হচ্ছে না")
+            } else if (l.any { it.second == k }) {
+                toast("এই চাবি আগেই আছে")
+            } else {
+                val nm = nameF.text.toString().trim()
+                l.add(Pair(if (nm.isEmpty()) "চাবি " + (l.size + 1) else nm, k))
+                saveKeys(l)
+                nameF.setText("")
+                keyF.setText("")
+                refresh()
+            }
+        })
+        return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
+    }
+
+    private fun callGemini(key: String, audioB64: String?): String =
+        withKeys(key) { callGeminiWith(it, audioB64) }
+
+    private fun callGeminiWith(key: String, audioB64: String?): String {
         val contents = JSONArray(history.toString())
         if (audioB64 != null) {
             val parts = JSONArray()
@@ -1769,6 +2152,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             )
             .put("contents", contents)
         var lastErr = "অজানা সমস্যা"
+        var quotaHit = false
+        var badKey = false
         val savedModel = prefs.getString("model", "") ?: ""
         val order = if (savedModel.isNotEmpty() && MODELS.contains(savedModel))
             listOf(savedModel) + MODELS.filter { it != savedModel } else MODELS
@@ -1802,15 +2187,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 prefs.edit().putString("model", m).apply()
                 return sb.toString()
             }
-            if (code == 429) throw Exception("ফ্রি লিমিট শেষ, একটু পরে বলো")
+            if (code == 429) {
+                quotaHit = true
+                lastErr = "ফ্রি লিমিট শেষ"
+                continue
+            }
             var msg = ""
             try {
                 msg = JSONObject(text).getJSONObject("error").optString("message")
             } catch (ex: Exception) {
             }
             lastErr = ("কোড " + code + " (" + m + ") " + msg).take(220)
+            if (code == 403 || (code == 400 && msg.contains("API key", true))) {
+                badKey = true
+                break
+            }
             if (code != 404 && code != 400) break
         }
+        if (badKey || quotaHit) throw QuotaException(lastErr)
         throw Exception(lastErr)
     }
 
@@ -1841,19 +2235,46 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (clean.isNotEmpty()) addMsg(clean, false, true)
         if (cmds.isNotEmpty()) {
             ui.postDelayed({
-                for (c in cmds) runCommand(c.groupValues[1].uppercase(), c.groupValues[2].trim())
+                for (c in cmds) {
+                    val r = runCommand(c.groupValues[1].uppercase(), c.groupValues[2].trim())
+                    if (r != null) addToolResult(r)
+                }
+                if (!busy) deliverPending()
             }, 500)
         }
         if (ttsReady && clean.isNotEmpty()) {
             stopListening()
             setOrb(3)
+            applyLang(clean)
             tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "angela")
         } else {
             finishTurn()
         }
     }
 
-    private fun runCommand(type: String, arg: String) {
+    @Volatile private var pendingTool: String? = null
+    private var toolDepth = 0
+    private var torchOn = false
+    private var curLang = "bn"
+
+    private fun addToolResult(r: String) {
+        val old = pendingTool
+        pendingTool = if (old == null) r else old + "; " + r
+    }
+
+    private fun deliverPending(): Boolean {
+        val pt = pendingTool ?: return false
+        pendingTool = null
+        if (toolDepth >= 2) return false
+        val key = prefs.getString("key", "") ?: ""
+        if (key.isBlank()) return false
+        toolDepth++
+        pushTurn("user", "(টুলের ফল: " + pt + "। এটা দিয়ে সাঈদকে ছোট স্বাভাবিক উত্তর দাও, লিংক পড়বে না, নতুন ট্যাগ দেবে না।)")
+        runChat(key, null)
+        return true
+    }
+
+    private fun runCommand(type: String, arg: String): String? {
         try {
             when (type) {
                 "OPEN" -> openApp(arg)
@@ -1875,75 +2296,104 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 }
                 "MEMORY" -> putList("mem", getList("mem") + arg.replace("\n", " "))
                 "TASK" -> putList("tasks", getList("tasks") + arg.replace("\n", " "))
+                "BATTERY" -> return batteryInfo()
+                "TORCH" -> return torch(arg)
+                "VOLUME" -> return volume(arg)
+                "WIFI" -> return wifiInfo(arg)
+                "BT" -> return btInfo(arg)
+                "ALARM" -> return setAlarm(arg)
+                "TIMER" -> return setTimer(arg)
+                "CAL" -> return addCalendar(arg)
+                "WEB" -> webTool(arg)
             }
         } catch (e: Exception) {
             addMsg("কাজটা করতে পারলাম না: " + e.message, false, false)
+            return "কাজটা হয়নি: " + (e.message ?: "")
         }
+        return null
     }
 
-    // ---------- ইউটিউব: খুঁজে প্রথম ভিডিও সরাসরি চালানো ----------
-    private fun ytLaunch(uri: String) {
-        val i = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage("com.google.android.youtube")
-        try {
+    private fun batteryInfo(): String {
+        val i = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val lvl = i?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = i?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
+        val pct = if (lvl >= 0 && scale > 0) lvl * 100 / scale else -1
+        val st = i?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val charging = st == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+            st == android.os.BatteryManager.BATTERY_STATUS_FULL
+        val temp = (i?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10.0
+        val health = when (i?.getIntExtra(android.os.BatteryManager.EXTRA_HEALTH, 0)) {
+            android.os.BatteryManager.BATTERY_HEALTH_GOOD -> "ভালো"
+            android.os.BatteryManager.BATTERY_HEALTH_OVERHEAT -> "অতিরিক্ত গরম"
+            android.os.BatteryManager.BATTERY_HEALTH_DEAD -> "নষ্ট"
+            android.os.BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "ভোল্টেজ বেশি"
+            android.os.BatteryManager.BATTERY_HEALTH_COLD -> "ঠান্ডা"
+            else -> "অজানা"
+        }
+        return "ব্যাটারি " + pct + "%, " + (if (charging) "চার্জ হচ্ছে" else "চার্জ হচ্ছে না") +
+            ", তাপমাত্রা " + temp + " ডিগ্রি, স্বাস্থ্য " + health
+    }
+
+    private fun torch(arg: String): String {
+        val cm = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+        val id = cm.cameraIdList.firstOrNull {
+            cm.getCameraCharacteristics(it).get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        } ?: return "এই ফোনে টর্চ নেই"
+        val want = when (arg.trim().lowercase()) {
+            "on", "অন" -> true
+            "off", "অফ" -> false
+            else -> !torchOn
+        }
+        cm.setTorchMode(id, want)
+        torchOn = want
+        return if (want) "টর্চ চালু হয়েছে" else "টর্চ বন্ধ হয়েছে"
+    }
+
+    private fun volume(arg: String): String {
+        val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val st = android.media.AudioManager.STREAM_MUSIC
+        val mx = am.getStreamMaxVolume(st)
+        val cur = am.getStreamVolume(st)
+        val a = arg.trim().lowercase()
+        val target = when {
+            a == "up" -> minOf(mx, cur + maxOf(1, mx / 8))
+            a == "down" -> maxOf(0, cur - maxOf(1, mx / 8))
+            a == "mute" -> 0
+            a == "max" -> mx
+            a.toIntOrNull() != null -> a.toInt().coerceIn(0, 100) * mx / 100
+            else -> cur
+        }
+        am.setStreamVolume(st, target, android.media.AudioManager.FLAG_SHOW_UI)
+        return "মিডিয়া ভলিউম এখন " + (if (mx > 0) target * 100 / mx else 0) + " শতাংশ"
+    }
+
+    private fun wifiInfo(arg: String): String {
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+        val on = wm.isWifiEnabled
+        if (arg.trim().lowercase() == "open") {
+            val i = if (android.os.Build.VERSION.SDK_INT >= 29)
+                Intent(android.provider.Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
+            else Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
             launch(i)
+        }
+        return "ওয়াই-ফাই " + (if (on) "চালু" else "বন্ধ")
+    }
+
+    private fun btInfo(arg: String): String {
+        @Suppress("DEPRECATION")
+        val ad = android.bluetooth.BluetoothAdapter.getDefaultAdapter() ?: return "এই ফোনে ব্লুটুথ নেই"
+        val on = try {
+            ad.isEnabled
         } catch (e: Exception) {
-            val web = if (uri.startsWith("vnd.youtube:"))
-                "https://www.youtube.com/watch?v=" + uri.removePrefix("vnd.youtube:") else uri
-            launch(Intent(Intent.ACTION_VIEW, Uri.parse(web)))
+            false
         }
+        if (arg.trim().lowercase() == "open") launch(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+        return "ব্লুটুথ " + (if (on) "চালু" else "বন্ধ")
     }
 
-    private fun youtubeSearch(q: String) {
-        ytLaunch("https://www.youtube.com/results?search_query=" + URLEncoder.encode(q, "UTF-8"))
-    }
-
-    private fun playYoutube(q: String) {
-        Thread {
-            var id: String? = null
-            try {
-                val u = "https://www.youtube.com/results?hl=en&search_query=" + URLEncoder.encode(q, "UTF-8")
-                val c = URL(u).openConnection() as HttpURLConnection
-                c.connectTimeout = 8000
-                c.readTimeout = 8000
-                c.setRequestProperty(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-                )
-                c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-                c.setRequestProperty("Cookie", "CONSENT=YES+1")
-                val html = c.inputStream.bufferedReader().use { it.readText() }
-                id = Regex("\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"")
-                    .find(html)?.groupValues?.get(1)
-            } catch (e: Exception) {
-            }
-            val vid = id
-            runOnUiThread {
-                try {
-                    if (vid != null) ytLaunch("vnd.youtube:" + vid) else youtubeSearch(q)
-                } catch (e: Exception) {
-                    addMsg("ইউটিউব খুলতে পারলাম না: " + e.message, false, false)
-                }
-            }
-        }.start()
-    }
-
-    // ব্যাকগ্রাউন্ড থেকেও অ্যাপ খুলতে অ্যাপ-কনটেক্সট ও নতুন টাস্ক ব্যবহার হয়
-    private fun launch(i: Intent) {
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        applicationContext.startActivity(i)
-    }
-
-    private fun openApp(name: String) {
-        val pm = packageManager
-        val q = name.lowercase().trim()
-        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val apps = pm.queryIntentActivities(launcher, 0)
-        val hit = apps.firstOrNull { it.loadLabel(pm).toString().lowercase().contains(q) }
-        if (hit == null) {
-            addMsg("\"" + name + "\" নামে কোনো অ্যাপ খুঁজে পেলাম না।", false, false)
-            return
-        }
-        val i = pm.getLaunchIntentForPackage(hit.activityInfo.packageName)
-        if (i != null) launch(i)
-    }
-}
+    private fun setAlarm(arg: String): String {
+        val p = arg.split(":", limit = 3)
+        val h = p.getOrNull(0)?.trim()?.toIntOrNull()
+        val m = p.getOrNull(1)?.trim()?.toIntOrNull()
+        if (h == null || m == null || h !in 0..23 || m !in 0..59) return "অ্যালার্মের সময়টা বুঝতে পারিনি"
+        val i = Intent(android.provider.AlarmCl
