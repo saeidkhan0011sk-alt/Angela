@@ -61,7 +61,6 @@ class HomeScene(
         context.resources, R.drawable.home_new,
         BitmapFactory.Options().apply { inScaled = false }
     )
-    private val ambient: Bitmap = Bitmap.createScaledBitmap(img, 24, 43, true)
     private val iw = img.width.toFloat()
     private val ih = img.height.toFloat()
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
@@ -186,7 +185,7 @@ class HomeScene(
         }
         jaw += (speech - jaw) * 0.6f
         bhAngle += (10f + 85f * amp * min(k, 1.3f)) * dt
-        micAngle += (22f + 130f * amp + 90f * touchBoost) * dt
+        micAngle += (130f * amp + 90f * touchBoost) * dt
         cloudPh += dt * (0.5f + 1.3f * amp)
         if (touching) touchBoost = 1f else touchBoost = max(0f, touchBoost - 1.6f * dt)
 
@@ -209,12 +208,9 @@ class HomeScene(
         p.alpha = 255
         c.drawRect(0f, 0f, w, h, p)
         p.shader = null
-        val cover = max(w / iw, h / ih)
-        val cw = iw * cover
-        val chh = ih * cover
-        bmpPaint.alpha = 120
-        c.drawBitmap(ambient, null, RectF((w - cw) / 2f, (h - chh) / 2f, (w + cw) / 2f, (h + chh) / 2f), bmpPaint)
-        bmpPaint.alpha = 255
+        glow(c, 0.25f * w, 0.04f * h, 0.7f * w, purple, 46)
+        glow(c, 0.85f * w, 0.97f * h, 0.8f * w, blue, 60)
+        glow(c, 0.2f * w, 0.9f * h, 0.6f * w, purple, 40)
 
         // ২. মূল ডিজাইন ছবি (ওপর-নিচের কিনারা নরমভাবে মিলিয়ে)
         if (oy > 2f) {
@@ -364,7 +360,9 @@ class HomeScene(
         val mcy = Y(1394f)
         val mro = 200f * sc
         micRect.set(mcx - 190f * sc, mcy - 190f * sc, mcx + 190f * sc, mcy + 190f * sc)
-        patch(
+        val micActive = (st == 1 && on && smooth > 0.12f) || st == 3 || touchBoost > 0.05f
+        val pulse = 0.5f + 0.5f * sin(t * 2f)
+        if (micActive) patch(
             c, RectF(mcx - mro, mcy - mro, mcx + mro, mcy + mro), mcx, mcy, mro, mro,
             floatArrayOf(0f, 0.46f, 0.56f, 0.9f, 1f), intArrayOf(0, 0, 255, 255, 0), null
         ) {
@@ -373,11 +371,12 @@ class HomeScene(
             c.drawBitmap(img, null, dest, bmpPaint)
             c.restore()
         }
-        val pulse = 0.5f + 0.5f * sin(t * 2f)
-        val glowA = 30f + 28f * pulse + 120f * amp + 100f * touchBoost
-        glow(c, mcx, mcy, 250f * sc, purple, (glowA * 0.8f).toInt())
-        glow(c, mcx, mcy, 190f * sc, cyan, (glowA * 0.7f).toInt())
-        if ((st == 1 && on) || st == 3 || touchBoost > 0.05f) {
+        if (micActive) {
+            val glowA = 40f * pulse + 110f * amp + 100f * touchBoost
+            glow(c, mcx, mcy, 250f * sc, purple, (glowA * 0.55f).toInt())
+            glow(c, mcx, mcy, 190f * sc, cyan, (glowA * 0.45f).toInt())
+        }
+        if (micActive) {
             p.xfermode = screen
             p.style = Paint.Style.STROKE
             for (i in 0 until 3) {
