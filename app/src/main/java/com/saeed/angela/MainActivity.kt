@@ -996,49 +996,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val note = tv("", 12f, soft)
         studioNote = note
         b.addView(note)
-        val field = input("প্রশ্ন বা কোডের অনুরোধ লেখো...")
-        fun chip(label: String, onClick: (TextView) -> Unit): TextView {
-            val t = btn(label) { }
-            t.setOnClickListener { onClick(t) }
-            return t
-        }
-        val prompts = listOf(
-            "বুঝিয়ে বলো" to "এটা বিস্তারিত বুঝিয়ে বলো।",
-            "OCR" to "এর সব লেখা হুবহু বের করো (OCR)।",
-            "অনুবাদ" to "এটা বাংলা হলে ইংরেজিতে, ইংরেজি হলে বাংলায় অনুবাদ করো।",
-            "সারাংশ" to "এর সংক্ষিপ্ত সারাংশ দাও।",
-            "ভুল খোঁজো" to "এই কোডে ভুল খুঁজে ঠিক করা কোড দাও।",
-            "ইমেইল লেখো" to "এই বিষয়ে একটা ভদ্র ইমেইল লিখে দাও: ",
-            "গ্রামার ঠিক" to "এই লেখার ভুল ঠিক করে আরও সুন্দর করে দাও: "
-        )
-        val chips1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for ((lab, pr) in prompts) {
-            chips1.addView(chip(lab) {
-                field.setText(pr)
-                field.setSelection(pr.length)
-            })
-        }
-        val h1 = android.widget.HorizontalScrollView(this)
-        h1.addView(chips1)
-        b.addView(h1, LinearLayout.LayoutParams(MATCH, WRAP))
-        val chips2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        chips2.addView(chip("ফাইল (PDF/টেক্সট)") { pickDoc() })
-        val webChip = chip(if (studioWeb) "ওয়েব: চালু ✓" else "ওয়েব: বন্ধ") { }
-        webChip.setOnClickListener {
-            studioWeb = !studioWeb
-            webChip.text = if (studioWeb) "ওয়েব: চালু ✓" else "ওয়েব: বন্ধ"
-        }
-        chips2.addView(webChip)
-        chips2.addView(chip("ক্লিপবোর্ড") { pasteClip(field) })
-        chips2.addView(chip("নতুন কথোপকথন") { clearStudio() })
-        val h2 = android.widget.HorizontalScrollView(this)
-        h2.addView(chips2)
-        b.addView(h2, LinearLayout.LayoutParams(MATCH, WRAP))
+        val field = input("যা জানতে চাও লেখো (লিংক, ছবি, ফাইল দিলে নিজেই বুঝে নেব)")
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(btn("ছবি") { pickImage() })
+        val plus = btn("+") { }
+        plus.setOnClickListener { showAttachMenu(plus, field) }
+        row.addView(plus)
         row.addView(field, LinearLayout.LayoutParams(0, WRAP, 1f))
         row.addView(circleBtn(2, 46) {
             val t = field.text.toString()
@@ -1155,6 +1120,35 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }.start()
     }
 
+    // + বোতাম: সব অপশন এই ছোট মেনুর ভেতরে থাকে
+    private fun showAttachMenu(anchor: View, field: EditText) {
+        val m = android.widget.PopupMenu(this, anchor)
+        m.menu.add(0, 1, 0, "ছবি যোগ করো")
+        m.menu.add(0, 2, 1, "ফাইল (PDF / টেক্সট / কোড)")
+        m.menu.add(0, 3, 2, "ক্লিপবোর্ডের লেখা বসাও")
+        m.menu.add(0, 4, 3, "নতুন কথোপকথন")
+        m.setOnMenuItemClickListener { mi ->
+            when (mi.itemId) {
+                1 -> pickImage()
+                2 -> pickDoc()
+                3 -> pasteClip(field)
+                4 -> clearStudio()
+            }
+            true
+        }
+        m.show()
+    }
+
+    // প্রশ্ন দেখে নিজে ঠিক করে ওয়েব সার্চ লাগবে কি না
+    private fun needsWeb(q: String): Boolean {
+        val l = q.lowercase()
+        val keys = listOf(
+            "সার্চ", "খোঁজ", "খুঁজ", "ইন্টারনেট", "ওয়েব", "search", "google", "সর্বশেষ", "latest", "news",
+            "খবর", "আজকের", "দাম", "price", "আবহাওয়া", "weather", "বর্তমান", "রিভিউ", "review", "এখনকার"
+        )
+        return keys.any { l.contains(it) }
+    }
+
     private fun pickDoc() {
         val i = Intent(Intent.ACTION_GET_CONTENT).setType("*/*")
         i.putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf", "text/*", "application/json", "application/xml"))
@@ -1256,7 +1250,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         pendingDocText = null
         studioNote?.text = "ভাবছি..."
         studioBusy = true
-        val web = studioWeb
+        val web = needsWeb(q)
+        val urlCtx = Regex("https?://\\S+").containsMatchIn(q)
         val parts = JSONArray()
         if (img != null) {
             parts.put(JSONObject().put("inline_data", JSONObject().put("mime_type", "image/jpeg").put("data", img)))
@@ -1270,7 +1265,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             var r: String? = null
             var e: String? = null
             try {
-                r = callStudio(key, contents, web)
+                r = callStudio(key, contents, web, urlCtx)
             } catch (ex: Exception) {
                 e = ex.message ?: "অজানা সমস্যা"
             }
@@ -1296,18 +1291,32 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }.start()
     }
 
-    private fun callStudio(key: String, contents: JSONArray, web: Boolean = false): String =
-        withKeys(key) { callStudioWith(it, contents, web) }
+    private fun callStudio(key: String, contents: JSONArray, web: Boolean = false, urlCtx: Boolean = false): String =
+        withKeys(key) { k ->
+            try {
+                callStudioWith(k, contents, web, urlCtx)
+            } catch (e: QuotaException) {
+                throw e
+            } catch (e: Exception) {
+                if (web || urlCtx) callStudioWith(k, contents, false, false) else throw e
+            }
+        }
 
-    private fun callStudioWith(key: String, contents: JSONArray, web: Boolean): String {
+    private fun callStudioWith(key: String, contents: JSONArray, web: Boolean, urlCtx: Boolean): String {
         val sys = "তুমি অ্যাঞ্জেলা, সাঈদের পার্সোনাল অ্যাসিস্ট্যান্ট। ছবি পেলে মনোযোগ দিয়ে দেখে বিস্তারিত বিশ্লেষণ করে বাংলায় বুঝিয়ে দাও। " +
             "কোড চাইলে সম্পূর্ণ, সঠিক ও চালানোর উপযোগী কোড লিখবে এবং কোডটা অবশ্যই তিনটা ব্যাকটিক চিহ্নের ভেতরে ভাষার নাম দিয়ে দেবে। " +
             "কোডের বাইরের ব্যাখ্যা বাংলায় সংক্ষিপ্ত রাখো এবং কোডটা কোথায় বসাতে হবে তা স্পষ্ট বলো। ইমোজি ব্যবহার করবে না। " +
-            (if (web) "ইন্টারনেট থেকে পাওয়া তথ্য দিলে সূত্র উল্লেখ করো, আর যেটা নিশ্চিত নও সেটা স্পষ্ট বলো।" else "")
+            (if (web) "ইন্টারনেট থেকে পাওয়া তথ্য দিলে সূত্র উল্লেখ করো, আর যেটা নিশ্চিত নও সেটা স্পষ্ট বলো। " else "") +
+            "সাঈদের প্রশ্ন বুঝে নিজেই ঠিক কাজটা করো: ছবি বা ফাইল থাকলে এবং আলাদা নির্দেশ না থাকলে বিশ্লেষণ ও সারাংশ দাও; লেখা বের করতে বললে হুবহু লেখা (OCR) দাও; অনুবাদ চাইলে অনুবাদ করো; লিংক থাকলে লিংকের লেখা পড়ে বাংলায় সারাংশ বা উত্তর দাও; কোড চাইলে সম্পূর্ণ কোড দাও।"
         val body = JSONObject()
             .put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sys))))
             .put("contents", contents)
-        if (web) body.put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
+        if (web || urlCtx) {
+            val tl = JSONArray()
+            if (web) tl.put(JSONObject().put("google_search", JSONObject()))
+            if (urlCtx) tl.put(JSONObject().put("url_context", JSONObject()))
+            body.put("tools", tl)
+        }
         var quotaHit = false
         var badKey = false
         var lastErr = "অজানা সমস্যা"
