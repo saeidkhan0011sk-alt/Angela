@@ -8,25 +8,22 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
-import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.SweepGradient
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
-/** RGB থিমের রঙের সেট */
+/** RGB থিমের রঙের সেট (CUSTOMIZE পেজ এটা ব্যবহার করে) */
 object AngelaTheme {
     val names = listOf("নীল-বেগুনি", "সাইবার সবুজ", "গোলাপি-ম্যাজেন্টা")
     val sets = arrayOf(
@@ -37,8 +34,9 @@ object AngelaTheme {
 }
 
 /**
- * Angela-র প্রিমিয়াম হোম স্ক্রিন: পুরোটা কোডে আঁকা ও অ্যানিমেটেড।
- * মুখ (পলক, শ্বাস, মাথা নড়া, ঠোঁট), হলোগ্রাফিক রিং, RGB মাইক বোতাম, ঢেউ, কণা, নিচের নেভিগেশন।
+ * Angela-র নতুন হোম স্ক্রিন: আপনার ডিজাইন ছবির ওপর জীবন্ত অ্যানিমেশন।
+ * ব্ল্যাক হোল ঘোরে, মেঘ দুই পাশ থেকে মাঝে বয়, মাইকের রিং ঘোরে, কথা বললে সব তীব্র হয়।
+ * হোমে শুধু মাইক আর ওপরের ডানের সেটিংস আইকন চাপা যায়।
  */
 class HomeScene(
     context: Context,
@@ -59,74 +57,54 @@ class HomeScene(
     var navActive = 0
 
     private val dens = context.resources.displayMetrics.density
-    private val face: Bitmap = BitmapFactory.decodeResource(
-        context.resources, R.drawable.angela_logo,
+    private val img: Bitmap = BitmapFactory.decodeResource(
+        context.resources, R.drawable.home_new,
         BitmapFactory.Options().apply { inScaled = false }
     )
+    private val ambient: Bitmap = Bitmap.createScaledBitmap(img, 24, 43, true)
+    private val iw = img.width.toFloat()
+    private val ih = img.height.toFloat()
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
     private val tp = Paint(Paint.ANTI_ALIAS_FLAG)
     private val screen = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
     private val dstIn = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
-    private val skinHi = Color.rgb(150, 166, 192)
-    private val skinLo = Color.rgb(104, 120, 146)
+    private val cyan = Color.rgb(56, 189, 248)
+    private val blue = Color.rgb(59, 130, 246)
+    private val purple = Color.rgb(139, 92, 246)
+    private val pink = Color.rgb(236, 72, 153)
+    private val mx = Matrix()
 
     private var last = 0L
     private var smooth = 0f
     private var jaw = 0f
-    private var lookX = 0f
-    private var lookTarget = 0f
-    private var nextBlink = 0L
-    private var blinkStart = 0L
+    private var bhAngle = 0f
+    private var micAngle = 0f
+    private var cloudPh = 0f
+    private var touchBoost = 0f
+    private var touching = false
     private var tapCount = 0
     private var bgShader: LinearGradient? = null
     private var bgH = 0f
-    private var sweepTheme = -1
-    private val sweeps = arrayOfNulls<SweepGradient>(3)
-    private var micSweep: SweepGradient? = null
 
     private class Ripple(val x: Float, val y: Float, val t0: Long, val color: Int)
 
     private val ripples = ArrayList<Ripple>()
-    private val rnd = java.util.Random(11)
-    private val n = 46
+    private val rnd = java.util.Random(5)
+    private val n = 44
     private val px = FloatArray(n) { rnd.nextFloat() }
     private val py = FloatArray(n) { rnd.nextFloat() }
-    private val pv = FloatArray(n) { 0.008f + rnd.nextFloat() * 0.025f }
+    private val pv = FloatArray(n) { 0.006f + rnd.nextFloat() * 0.02f }
     private val ps = FloatArray(n) { 0.7f + rnd.nextFloat() * 1.8f }
-    private val stx = FloatArray(70) { rnd.nextFloat() }
-    private val sty = FloatArray(70) { rnd.nextFloat() }
-    private val stp = FloatArray(70) { rnd.nextFloat() }
-
-    private val rMic = RectF()
-    private val rChat = RectF()
-    private val rTools = RectF()
-    private val rMenu = RectF()
-    private val rNav = Array(5) { RectF() }
-    private val tmpPath = Path()
-    private val jawPath = Path()
-    private val mx = Matrix()
+    private val gearRect = RectF()
+    private val micRect = RectF()
 
     private fun withA(c: Int, a: Int): Int =
         Color.argb(a.coerceIn(0, 255), Color.red(c), Color.green(c), Color.blue(c))
 
-    private fun lerp(a: Int, b: Int, u: Float): Int {
-        val v = u.coerceIn(0f, 1f)
-        return Color.rgb(
-            (Color.red(a) + (Color.red(b) - Color.red(a)) * v).toInt(),
-            (Color.green(a) + (Color.green(b) - Color.green(a)) * v).toInt(),
-            (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * v).toInt()
-        )
-    }
-
-    private fun grad3(pal: IntArray, u: Float): Int =
-        if (u < 0.5f) lerp(pal[0], pal[1], u * 2f) else lerp(pal[1], pal[2], (u - 0.5f) * 2f)
-
     private fun glow(c: Canvas, cx: Float, cy: Float, r: Float, color: Int, alpha: Int) {
-        if (r < 1f) return
-        p.shader = RadialGradient(
-            cx, cy, r, withA(color, alpha), withA(color, 0), Shader.TileMode.CLAMP
-        )
+        if (r < 1f || alpha <= 0) return
+        p.shader = RadialGradient(cx, cy, r, withA(color, alpha), withA(color, 0), Shader.TileMode.CLAMP)
         p.xfermode = screen
         p.style = Paint.Style.FILL
         p.alpha = 255
@@ -135,155 +113,61 @@ class HomeScene(
         p.xfermode = null
     }
 
-    private fun ensureShaders(pal: IntArray, theme: Int) {
-        if (theme == sweepTheme) return
-        sweepTheme = theme
-        val cols = intArrayOf(pal[0], pal[1], pal[2], pal[0])
-        for (i in 0 until 3) sweeps[i] = SweepGradient(0f, 0f, cols, null)
-        micSweep = SweepGradient(0f, 0f, cols, null)
+    /** একটা অংশ আলাদা স্তরে এঁকে নরম কিনারার মাস্ক দিয়ে মূল ছবির ওপর বসায় */
+    private fun patch(
+        c: Canvas, bounds: RectF, cx: Float, cy: Float, rx: Float, ry: Float,
+        stops: FloatArray, alphas: IntArray, extra: Shader?, drawFn: () -> Unit
+    ) {
+        val lc = c.saveLayer(bounds, null)
+        drawFn()
+        val cols = IntArray(alphas.size) { Color.argb(alphas[it], 255, 255, 255) }
+        val sh = RadialGradient(cx, cy, rx, cols, stops, Shader.TileMode.CLAMP)
+        mx.reset()
+        mx.setScale(1f, ry / rx, cx, cy)
+        sh.setLocalMatrix(mx)
+        p.shader = sh
+        p.xfermode = dstIn
+        p.style = Paint.Style.FILL
+        p.alpha = 255
+        c.drawRect(bounds, p)
+        if (extra != null) {
+            p.shader = extra
+            c.drawRect(bounds, p)
+        }
+        p.shader = null
+        p.xfermode = null
+        c.restoreToCount(lc)
     }
 
     fun addRipple(x: Float, y: Float) {
-        val pal = AngelaTheme.sets[themeOf().coerceIn(0, AngelaTheme.sets.size - 1)]
-        ripples.add(Ripple(x, y, SystemClock.uptimeMillis(), pal[tapCount % 3]))
+        val col = when (tapCount % 3) {
+            0 -> cyan
+            1 -> purple
+            else -> blue
+        }
+        ripples.add(Ripple(x, y, SystemClock.uptimeMillis(), col))
         tapCount++
         invalidate()
-    }
-
-    private fun eyelid(c: Canvas, cx: Float, cy: Float, rx: Float, ry: Float, close: Float) {
-        if (close <= 0.03f) return
-        c.save()
-        tmpPath.reset()
-        tmpPath.addOval(RectF(cx - rx, cy - ry, cx + rx, cy + ry), Path.Direction.CW)
-        c.clipPath(tmpPath)
-        val bottom = cy - ry + 2f * ry * close
-        p.shader = LinearGradient(0f, cy - ry, 0f, cy + ry, skinHi, skinLo, Shader.TileMode.CLAMP)
-        p.style = Paint.Style.FILL
-        p.xfermode = null
-        p.alpha = 255
-        c.drawRect(cx - rx, cy - ry, cx + rx, bottom, p)
-        p.shader = null
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 1.6f * dens
-        p.color = Color.argb(220, 20, 28, 48)
-        c.drawLine(cx - rx, bottom, cx + rx, bottom, p)
-        c.restore()
-    }
-
-    private fun navIcon(c: Canvas, i: Int, cx: Float, cy: Float, r: Float, color: Int) {
-        p.xfermode = null
-        p.shader = null
-        p.color = color
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 1.8f * dens
-        p.strokeJoin = Paint.Join.ROUND
-        tmpPath.reset()
-        when (i) {
-            0 -> {
-                tmpPath.moveTo(cx - r, cy)
-                tmpPath.lineTo(cx, cy - r)
-                tmpPath.lineTo(cx + r, cy)
-                tmpPath.moveTo(cx - r * 0.7f, cy - r * 0.1f)
-                tmpPath.lineTo(cx - r * 0.7f, cy + r)
-                tmpPath.lineTo(cx + r * 0.7f, cy + r)
-                tmpPath.lineTo(cx + r * 0.7f, cy - r * 0.1f)
-                c.drawPath(tmpPath, p)
-            }
-            1 -> {
-                c.drawCircle(cx - r * 0.45f, cy, r * 0.62f, p)
-                c.drawCircle(cx + r * 0.45f, cy, r * 0.62f, p)
-                c.drawLine(cx, cy - r * 0.55f, cx, cy + r * 0.55f, p)
-            }
-            2 -> {
-                tmpPath.moveTo(cx, cy - r)
-                tmpPath.lineTo(cx + r * 0.28f, cy - r * 0.28f)
-                tmpPath.lineTo(cx + r, cy)
-                tmpPath.lineTo(cx + r * 0.28f, cy + r * 0.28f)
-                tmpPath.lineTo(cx, cy + r)
-                tmpPath.lineTo(cx - r * 0.28f, cy + r * 0.28f)
-                tmpPath.lineTo(cx - r, cy)
-                tmpPath.lineTo(cx - r * 0.28f, cy - r * 0.28f)
-                tmpPath.close()
-                p.style = Paint.Style.FILL
-                c.drawPath(tmpPath, p)
-            }
-            3 -> {
-                tmpPath.moveTo(cx + r * 0.2f, cy - r)
-                tmpPath.lineTo(cx - r * 0.5f, cy + r * 0.1f)
-                tmpPath.lineTo(cx, cy + r * 0.1f)
-                tmpPath.lineTo(cx - r * 0.2f, cy + r)
-                tmpPath.lineTo(cx + r * 0.5f, cy - r * 0.1f)
-                tmpPath.lineTo(cx, cy - r * 0.1f)
-                tmpPath.close()
-                c.drawPath(tmpPath, p)
-            }
-            else -> {
-                c.drawCircle(cx, cy, r * 0.5f, p)
-                for (j in 0 until 8) {
-                    val a = j * PI.toFloat() / 4f
-                    c.drawLine(
-                        cx + cos(a) * r * 0.72f, cy + sin(a) * r * 0.72f,
-                        cx + cos(a) * r, cy + sin(a) * r, p
-                    )
-                }
-            }
-        }
-    }
-
-    private fun sideBtn(
-        c: Canvas, cx: Float, cy: Float, s: Float, kind: Int, label: String, pal: IntArray, r: RectF
-    ) {
-        r.set(cx - s / 2f, cy - s / 2f, cx + s / 2f, cy + s / 2f)
-        p.xfermode = null
-        p.shader = LinearGradient(
-            0f, r.top, 0f, r.bottom, Color.argb(215, 32, 22, 96), Color.argb(225, 12, 8, 44),
-            Shader.TileMode.CLAMP
-        )
-        p.style = Paint.Style.FILL
-        p.alpha = 255
-        c.drawRoundRect(r, s * 0.26f, s * 0.26f, p)
-        p.shader = null
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 1.6f * dens
-        p.color = withA(pal[0], 170)
-        c.drawRoundRect(r, s * 0.26f, s * 0.26f, p)
-        p.color = Color.rgb(200, 230, 255)
-        if (kind == 0) {
-            val bw = s * 0.5f
-            val bh = s * 0.36f
-            val bubble = RectF(cx - bw / 2f, cy - bh / 2f - s * 0.04f, cx + bw / 2f, cy + bh / 2f - s * 0.04f)
-            c.drawRoundRect(bubble, s * 0.1f, s * 0.1f, p)
-            tmpPath.reset()
-            tmpPath.moveTo(cx - bw * 0.25f, bubble.bottom)
-            tmpPath.lineTo(cx - bw * 0.32f, bubble.bottom + s * 0.1f)
-            tmpPath.lineTo(cx - bw * 0.05f, bubble.bottom)
-            c.drawPath(tmpPath, p)
-            p.style = Paint.Style.FILL
-            for (d in -1..1) c.drawCircle(cx + d * bw * 0.22f, bubble.centerY(), s * 0.028f, p)
-        } else {
-            val sq = s * 0.17f
-            val g = s * 0.07f
-            val st0 = -(sq * 2f + g) / 2f
-            for (a in 0..1) {
-                for (b in 0..1) {
-                    val x = cx + st0 + a * (sq + g)
-                    val y = cy + st0 + b * (sq + g)
-                    c.drawRoundRect(RectF(x, y, x + sq, y + sq), sq * 0.25f, sq * 0.25f, p)
-                }
-            }
-        }
-        tp.style = Paint.Style.FILL
-        tp.color = Color.rgb(170, 160, 225)
-        tp.textSize = 11f * dens
-        tp.textAlign = Paint.Align.CENTER
-        tp.typeface = Typeface.DEFAULT
-        c.drawText(label, cx, r.bottom + 15f * dens, tp)
     }
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
+
+        // সেটিংস পেজ খোলা থাকলে নিচে শুধু গাঢ় রং, অ্যানিমেশন বন্ধ (ব্যাটারি বাঁচে)
+        if (paused()) {
+            p.shader = LinearGradient(
+                0f, 0f, 0f, h, Color.rgb(6, 3, 24), Color.rgb(21, 12, 64), Shader.TileMode.CLAMP
+            )
+            p.style = Paint.Style.FILL
+            p.xfermode = null
+            p.alpha = 255
+            c.drawRect(0f, 0f, w, h, p)
+            p.shader = null
+            return
+        }
+
         val now = SystemClock.uptimeMillis()
         val dt = if (last == 0L) 0.016f else ((now - last) / 1000f).coerceIn(0.001f, 0.05f)
         last = now
@@ -292,30 +176,31 @@ class HomeScene(
         val on = micOn()
         val k = intensityOf().coerceIn(0.2f, 1.6f)
         val fa = faceAnimOn()
-        val theme = themeOf().coerceIn(0, AngelaTheme.sets.size - 1)
-        val pal = AngelaTheme.sets[theme]
-        ensureShaders(pal, theme)
         smooth += (levelOf() - smooth) * 0.35f
         val speech = if (st == 3) speechOf() else 0f
         val amp: Float = when (st) {
-            1 -> if (on) smooth else 0.04f
-            3 -> 0.2f + 0.8f * speech
-            2 -> 0.22f
-            else -> 0.04f
+            1 -> if (on) smooth else 0.03f
+            3 -> 0.25f + 0.75f * speech
+            2 -> 0.2f
+            else -> 0.03f
         }
         jaw += (speech - jaw) * 0.6f
-        lookX += (lookTarget - lookX) * 0.08f
+        bhAngle += (10f + 85f * amp * min(k, 1.3f)) * dt
+        micAngle += (22f + 130f * amp + 90f * touchBoost) * dt
+        cloudPh += dt * (0.5f + 1.3f * amp)
+        if (touching) touchBoost = 1f else touchBoost = max(0f, touchBoost - 1.6f * dt)
 
-        val navAreaH = 84f * dens
-        val top = topInset
-        val ch = h - botInset - navAreaH - top
-        fun yy(f: Float): Float = top + f * ch
+        // ছবির জায়গা: প্রস্থ অনুযায়ী ফিট, মাঝখানে বসানো
+        val sc = min(w / iw, h / ih)
+        val ox = (w - iw * sc) / 2f
+        val oy = ((h - ih * sc) * 0.45f).coerceAtLeast(0f)
+        val dest = RectF(ox, oy, ox + iw * sc, oy + ih * sc)
+        fun X(v: Float): Float = ox + v * sc
+        fun Y(v: Float): Float = oy + v * sc
 
-        // ১. পেছন: গ্রাডিয়েন্ট, নীহারিকা, তারা
+        // ১. ঝাপসা পটভূমি (ছবির দুই পাশ ও ওপর-নিচ ভরাট করে)
         if (bgShader == null || bgH != h) {
-            bgShader = LinearGradient(
-                0f, 0f, 0f, h, Color.rgb(4, 2, 14), Color.rgb(16, 8, 52), Shader.TileMode.CLAMP
-            )
+            bgShader = LinearGradient(0f, 0f, 0f, h, Color.rgb(3, 2, 14), Color.rgb(10, 6, 40), Shader.TileMode.CLAMP)
             bgH = h
         }
         p.shader = bgShader
@@ -324,169 +209,204 @@ class HomeScene(
         p.alpha = 255
         c.drawRect(0f, 0f, w, h, p)
         p.shader = null
-        glow(c, 0.2f * w + sin(t * 0.15f) * 0.05f * w, yy(0.25f), 0.55f * w, pal[1], (46 * k).toInt())
-        glow(c, 0.85f * w + cos(t * 0.12f) * 0.05f * w, yy(0.55f), 0.6f * w, pal[2], (36 * k).toInt())
-        glow(c, 0.5f * w, yy(0.92f), 0.7f * w, pal[0], (34 * k).toInt())
-        p.style = Paint.Style.FILL
-        p.xfermode = screen
-        for (i in stx.indices) {
-            val a = 40 + (90 * (0.5f + 0.5f * sin(t * 1.4f + stp[i] * 20f))).toInt()
-            p.color = Color.argb(a, 200, 220, 255)
-            c.drawCircle(stx[i] * w, sty[i] * h, (0.5f + stp[i]) * dens, p)
+        val cover = max(w / iw, h / ih)
+        val cw = iw * cover
+        val chh = ih * cover
+        bmpPaint.alpha = 120
+        c.drawBitmap(ambient, null, RectF((w - cw) / 2f, (h - chh) / 2f, (w + cw) / 2f, (h + chh) / 2f), bmpPaint)
+        bmpPaint.alpha = 255
+
+        // ২. মূল ডিজাইন ছবি (ওপর-নিচের কিনারা নরমভাবে মিলিয়ে)
+        if (oy > 2f) {
+            val lc = c.saveLayer(dest, null)
+            c.drawBitmap(img, null, dest, bmpPaint)
+            p.shader = LinearGradient(
+                0f, dest.top, 0f, dest.bottom,
+                intArrayOf(Color.TRANSPARENT, Color.WHITE, Color.WHITE, Color.TRANSPARENT),
+                floatArrayOf(0f, 0.035f, 0.965f, 1f), Shader.TileMode.CLAMP
+            )
+            p.xfermode = dstIn
+            p.style = Paint.Style.FILL
+            p.alpha = 255
+            c.drawRect(dest, p)
+            p.shader = null
+            p.xfermode = null
+            c.restoreToCount(lc)
+        } else {
+            c.drawBitmap(img, null, dest, bmpPaint)
         }
-        p.xfermode = null
 
-        // ২. অ্যাঞ্জেলার মুখ
-        val dw = min(1.3f * w, 0.703f * ch)
-        val dl = 0.5f * w - dw / 2f
-        val dtp = yy(0.07f)
-        fun fx(f: Float): Float = dl + f * dw
-        fun fy(f: Float): Float = dtp + f * dw
+        val soft = floatArrayOf(0f, 0.55f, 1f)
+        val softA = intArrayOf(255, 255, 0)
 
-        glow(c, 0.5f * w, fy(0.36f), 0.55f * dw, pal[1], (70 * k).toInt())
+        // ৩. মেঘ: দুই পাশ থেকে মাঝের দিকে বয়
+        val flow = (0.5f + 0.5f * sin(cloudPh)) * 30f * sc * min(k, 1.2f)
+        val clouds = arrayOf(
+            floatArrayOf(60f, 750f, 170f, 160f, 1f),
+            floatArrayOf(880f, 760f, 170f, 160f, -1f),
+            floatArrayOf(90f, 1320f, 190f, 120f, 1f),
+            floatArrayOf(850f, 1335f, 190f, 120f, -1f)
+        )
+        for (cl in clouds) {
+            val ccx = X(cl[0])
+            val ccy = Y(cl[1])
+            val rx = cl[2] * sc
+            val ry = cl[3] * sc
+            patch(c, RectF(ccx - rx, ccy - ry, ccx + rx, ccy + ry), ccx, ccy, rx, ry, soft, softA, null) {
+                c.save()
+                c.translate(flow * cl[4], 0f)
+                c.drawBitmap(img, null, dest, bmpPaint)
+                c.restore()
+            }
+        }
 
-        val bob = if (fa) sin(t * 1.3f) * 0.004f * dw * k else 0f
-        val sc = if (fa) 1f + 0.006f * sin(t * 1.3f) * k else 1f
-        var tilt = lookX * 2.5f
-        if (fa) tilt += sin(t * 0.7f) * 1.1f * k
-        if (st == 1) tilt += 2.2f
-        if (st == 3) tilt += sin(t * 5f) * 0.8f * speech
-        val shiftX = lookX * 0.012f * w
-        val pivotX = 0.5f * w
-        val pivotY = fy(0.78f)
-
-        var closeAmt = 0f
+        // ৪. মেয়েটার হালকা ভাসা, প্রজাপতির ডানা ঝাপটানো, কথা বললে ঠোঁট নড়া
         if (fa) {
-            if (nextBlink == 0L) nextBlink = now + 2500L
-            if (blinkStart == 0L && now >= nextBlink) blinkStart = now
-            if (blinkStart != 0L) {
-                val u = (now - blinkStart) / 200f
-                if (u >= 1f) {
-                    blinkStart = 0L
-                    nextBlink = now + 2200L + rnd.nextInt(4200)
-                } else {
-                    closeAmt = if (u < 0.5f) u * 2f else (1f - u) * 2f
+            val bob = sin(t * 1.3f) * 4f * sc * k
+            val gs = 1f + 0.004f * sin(t * 1.3f) * k
+            val gx = X(480f)
+            val gy = Y(560f)
+            val grx = 400f * sc
+            val gry = 300f * sc
+            patch(c, RectF(gx - grx, gy - gry, gx + grx, gy + gry), gx, gy, grx, gry, soft, softA, null) {
+                c.save()
+                c.translate(0f, bob)
+                c.scale(gs, gs, X(480f), Y(700f))
+                c.drawBitmap(img, null, dest, bmpPaint)
+                c.restore()
+            }
+            val bf = arrayOf(
+                floatArrayOf(757f, 379f, 62f, 60f, 0f),
+                floatArrayOf(754f, 554f, 52f, 50f, 1.7f),
+                floatArrayOf(119f, 555f, 52f, 48f, 3.1f)
+            )
+            for (b in bf) {
+                val bx = X(b[0])
+                val by = Y(b[1])
+                val brx = b[2] * sc
+                val bry = b[3] * sc
+                val dx = sin(t * 0.9f + b[4]) * 7f * sc
+                val dy = sin(t * 1.3f + b[4]) * 6f * sc
+                val flap = 1f + 0.12f * sin(t * 9f + b[4])
+                patch(c, RectF(bx - brx * 1.6f, by - bry * 1.6f, bx + brx * 1.6f, by + bry * 1.6f), bx, by, brx * 1.4f, bry * 1.4f, soft, softA, null) {
+                    c.save()
+                    c.translate(dx, dy)
+                    c.scale(flap, 1f, bx, by)
+                    c.drawBitmap(img, null, dest, bmpPaint)
+                    c.restore()
+                }
+            }
+            // ঠোঁট
+            val lx = X(549f)
+            val ly = Y(592f)
+            if (jaw > 0.05f) {
+                val lrx = 46f * sc
+                val lry = 30f * sc
+                patch(c, RectF(lx - lrx, ly - lry, lx + lrx, ly + lry), lx, ly, lrx, lry, soft, softA, null) {
+                    c.save()
+                    c.scale(1f + 0.08f * jaw, 1f + 0.5f * jaw, lx, ly)
+                    c.drawBitmap(img, null, dest, bmpPaint)
+                    c.restore()
+                }
+                if (jaw > 0.2f) {
+                    p.style = Paint.Style.FILL
+                    p.xfermode = null
+                    p.shader = null
+                    p.color = Color.argb(200, 50, 8, 22)
+                    c.drawOval(
+                        RectF(lx - (8f + 12f * jaw) * sc, ly + 1f * sc - (1f + 4f * jaw) * sc, lx + (8f + 12f * jaw) * sc, ly + 1f * sc + (1f + 4f * jaw) * sc),
+                        p
+                    )
                 }
             }
         }
 
-        val layerRect = RectF(dl - 0.1f * dw, dtp - 0.05f * dw, dl + 1.1f * dw, dtp + 0.86f * dw)
-        val lc = c.saveLayer(layerRect, null)
-        c.save()
-        c.translate(shiftX, bob)
-        c.rotate(tilt, pivotX, pivotY)
-        c.scale(sc, sc, pivotX, pivotY)
-        val dst = RectF(dl, dtp, dl + dw, dtp + dw)
-        val mouthY = fy(0.578f)
-        val open = jaw * 0.012f * dw
-        c.save()
-        c.clipRect(dl, dtp, dl + dw, mouthY)
-        c.drawBitmap(face, null, dst, bmpPaint)
-        c.restore()
-        c.save()
-        c.clipRect(dl, mouthY, dl + dw, dtp + 0.78f * dw)
-        c.drawBitmap(face, null, dst, bmpPaint)
-        c.restore()
-        if (open > 0.8f) {
+        // ৫. ব্ল্যাক হোল: সবসময় ঘোরে, কথা বললে দ্রুত
+        val bcx = X(468f)
+        val bcy = Y(1005f)
+        val brx0 = 430f * sc
+        val kk = 0.35f
+        val bry0 = brx0 * kk
+        val vmask = LinearGradient(
+            0f, Y(895f), 0f, Y(960f), Color.argb(0, 255, 255, 255), Color.argb(255, 255, 255, 255), Shader.TileMode.CLAMP
+        )
+        patch(
+            c, RectF(bcx - brx0, bcy - bry0, bcx + brx0, bcy + bry0), bcx, bcy, brx0, bry0,
+            floatArrayOf(0f, 0.17f, 0.30f, 0.78f, 1f), intArrayOf(0, 0, 255, 255, 0), vmask
+        ) {
+            c.save()
+            c.translate(bcx, bcy)
+            c.scale(1f, kk)
+            c.rotate(bhAngle)
+            c.scale(1f, 1f / kk)
+            c.translate(-bcx, -bcy)
+            c.drawBitmap(img, null, dest, bmpPaint)
+            c.restore()
+        }
+        // ব্ল্যাক হোলের শক্তির ঢেউ ও আলো
+        if (amp > 0.1f) {
+            p.xfermode = screen
+            p.style = Paint.Style.STROKE
+            for (i in 0 until 3) {
+                val ph = (t * (0.5f + amp) + i / 3f) % 1f
+                val rr = (0.22f + 0.85f * ph) * brx0
+                p.strokeWidth = (2f + 2f * amp) * dens
+                p.color = withA(if (i % 2 == 0) cyan else purple, ((1f - ph) * 230f * amp).toInt())
+                c.drawOval(RectF(bcx - rr, bcy - rr * kk, bcx + rr, bcy + rr * kk), p)
+            }
+            p.xfermode = null
+        }
+        glow(c, bcx, bcy, 300f * sc, blue, ((30f + 190f * amp * amp) * min(k, 1.3f)).toInt())
+        glow(c, bcx, bcy, 120f * sc, Color.WHITE, (60f * amp * amp * amp).toInt())
+
+        // ৬. মাইক: বাইরের রিং ঘোরে, আলো স্পন্দিত হয়
+        val mcx = X(465f)
+        val mcy = Y(1394f)
+        val mro = 200f * sc
+        micRect.set(mcx - 190f * sc, mcy - 190f * sc, mcx + 190f * sc, mcy + 190f * sc)
+        patch(
+            c, RectF(mcx - mro, mcy - mro, mcx + mro, mcy + mro), mcx, mcy, mro, mro,
+            floatArrayOf(0f, 0.46f, 0.56f, 0.9f, 1f), intArrayOf(0, 0, 255, 255, 0), null
+        ) {
+            c.save()
+            c.rotate(micAngle, mcx, mcy)
+            c.drawBitmap(img, null, dest, bmpPaint)
+            c.restore()
+        }
+        val pulse = 0.5f + 0.5f * sin(t * 2f)
+        val glowA = 30f + 28f * pulse + 120f * amp + 100f * touchBoost
+        glow(c, mcx, mcy, 250f * sc, purple, (glowA * 0.8f).toInt())
+        glow(c, mcx, mcy, 190f * sc, cyan, (glowA * 0.7f).toInt())
+        if ((st == 1 && on) || st == 3 || touchBoost > 0.05f) {
+            p.xfermode = screen
+            p.style = Paint.Style.STROKE
+            for (i in 0 until 3) {
+                val ph = (t * (0.7f + 0.6f * amp) + i / 3f) % 1f
+                val rr = (195f + ph * (90f + 120f * amp)) * sc
+                p.strokeWidth = 2.2f * dens
+                p.color = withA(if (i % 2 == 0) cyan else purple, ((1f - ph) * 200f * max(amp, touchBoost * 0.7f)).toInt())
+                c.drawCircle(mcx, mcy, rr, p)
+            }
+            p.xfermode = null
+        }
+        if (!on) {
             p.style = Paint.Style.FILL
             p.xfermode = null
             p.shader = null
-            p.color = Color.argb(240, 6, 10, 26)
-            c.drawOval(RectF(fx(0.462f), mouthY - open * 0.5f, fx(0.538f), mouthY + open + 1.5f), p)
-            jawPath.reset()
-            jawPath.moveTo(fx(0.43f), mouthY)
-            jawPath.lineTo(fx(0.572f), mouthY)
-            jawPath.lineTo(fx(0.56f), fy(0.63f))
-            jawPath.lineTo(fx(0.535f), fy(0.672f))
-            jawPath.lineTo(fx(0.465f), fy(0.672f))
-            jawPath.lineTo(fx(0.44f), fy(0.63f))
-            jawPath.close()
-            c.save()
-            c.translate(0f, open)
-            c.clipPath(jawPath)
-            c.drawBitmap(face, null, dst, bmpPaint)
-            c.restore()
+            p.color = Color.argb(170, 4, 3, 18)
+            c.drawCircle(mcx, mcy, 118f * sc, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 5f * dens
+            p.color = Color.rgb(239, 68, 68)
+            c.drawLine(mcx - 62f * sc, mcy - 62f * sc, mcx + 62f * sc, mcy + 62f * sc, p)
         }
-        eyelid(c, fx(0.397f), fy(0.372f), 0.066f * dw, 0.03f * dw, closeAmt)
-        eyelid(c, fx(0.590f), fy(0.372f), 0.066f * dw, 0.03f * dw, closeAmt)
-        c.restore()
-        // কিনারা মসৃণভাবে মিলিয়ে দেওয়ার মাস্ক
-        val mcx = 0.5f * w
-        val mcy = fy(0.37f)
-        val mrx = 0.5f * dw
-        val mry = 0.42f * dw
-        val maskShader = RadialGradient(
-            mcx, mcy, mrx, intArrayOf(Color.WHITE, Color.WHITE, Color.TRANSPARENT),
-            floatArrayOf(0f, 0.8f, 1f), Shader.TileMode.CLAMP
-        )
-        mx.reset()
-        mx.setScale(1f, mry / mrx, mcx, mcy)
-        maskShader.setLocalMatrix(mx)
-        p.shader = maskShader
-        p.xfermode = dstIn
-        p.style = Paint.Style.FILL
-        p.alpha = 255
-        c.drawRect(layerRect, p)
-        p.shader = null
-        p.xfermode = null
-        c.restoreToCount(lc)
 
-        // চোখের আলো
-        c.save()
-        c.translate(shiftX, bob)
-        c.rotate(tilt, pivotX, pivotY)
-        c.scale(sc, sc, pivotX, pivotY)
-        val gl = 70f + 110f * amp + 40f * sin(t * (if (st == 2) 4f else 2.2f))
-        val eyeA = (gl * min(k, 1.2f) * (1f - closeAmt)).toInt()
-        val gx = lookX * 0.01f * dw
-        val gy = if (st == 2) -0.012f * dw else 0f
-        val eyeCol = Color.rgb(90, 180, 255)
-        glow(c, fx(0.397f) + gx, fy(0.372f) + gy, 0.085f * dw, eyeCol, eyeA)
-        glow(c, fx(0.590f) + gx, fy(0.372f) + gy, 0.085f * dw, eyeCol, eyeA)
-        c.restore()
-
-        // ৩. হলোগ্রাফিক প্ল্যাটফর্ম রিং
-        val pcx = 0.5f * w
-        val pcy = yy(0.595f)
-        glow(c, pcx, pcy, 0.5f * w, pal[1], (50 + 70 * amp).toInt())
-        p.style = Paint.Style.STROKE
-        p.xfermode = screen
-        for (i in 0 until 3) {
-            val rr = (0.26f + 0.075f * i) * w * (1f + 0.03f * amp)
-            val dir = if (i % 2 == 0) 1f else -1f
-            mx.reset()
-            mx.setRotate(t * (18f + 12f * i) * dir * (0.6f + 0.8f * k))
-            mx.postTranslate(pcx, pcy)
-            sweeps[i]?.setLocalMatrix(mx)
-            p.shader = sweeps[i]
-            p.strokeWidth = (2.6f - 0.5f * i + 1.6f * amp) * dens
-            p.alpha = 210
-            c.drawOval(RectF(pcx - rr, pcy - rr * 0.16f, pcx + rr, pcy + rr * 0.16f), p)
-        }
-        p.shader = null
-        p.xfermode = null
-
-        // ৪. কথার ঢেউ (মাইকের আসল শব্দ বা অ্যাঞ্জেলার কথায় ওঠে)
-        val wy = yy(0.665f)
-        val nb = 44
-        val wx0 = 0.12f * w
-        val wx1 = 0.88f * w
-        p.xfermode = screen
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 0.0065f * w
-        for (i in 0 until nb) {
-            val u = i / (nb - 1f)
-            val env = sin(PI.toFloat() * u)
-            val noise = 0.45f + 0.55f * abs(sin(t * 6.5f + i * 0.83f) * cos(t * 3.1f + i * 0.37f))
-            val bh2 = 0.003f * ch + amp * 0.045f * ch * env * noise * min(k, 1.3f)
-            val x = wx0 + (wx1 - wx0) * u
-            p.color = grad3(pal, u)
-            p.alpha = 200
-            c.drawLine(x, wy - bh2, x, wy + bh2, p)
-        }
-        p.xfermode = null
-
-        // ৫. অবস্থার লেখা
+        // ৭. সেটিংস আইকনে হালকা আলো, ছোট অবস্থার লেখা
+        val gcx = X(872f)
+        val gcy = Y(57f)
+        val gr = max(50f * sc, 26f * dens)
+        gearRect.set(gcx - gr, gcy - gr, gcx + gr, gcy + gr)
+        glow(c, gcx, gcy, 60f * sc, cyan, (20f + 22f * pulse).toInt())
         val label = when (st) {
             1 -> if (on) "শুনছি..." else "মাইক বন্ধ"
             2 -> "ভাবছি..."
@@ -494,198 +414,13 @@ class HomeScene(
             else -> "মাইক বন্ধ"
         }
         tp.style = Paint.Style.FILL
-        tp.color = withA(pal[0], 235)
-        tp.textSize = 14f * dens
+        tp.color = withA(cyan, 215)
+        tp.textSize = 13f * dens
         tp.textAlign = Paint.Align.CENTER
-        tp.typeface = Typeface.DEFAULT_BOLD
-        c.drawText(label, 0.5f * w, yy(0.725f), tp)
-
-        // ৬. বড় RGB মাইক বোতাম
-        val mR = 0.115f * w
-        val baseY = yy(0.865f)
-        val floatY = if (st == 0 || st == 1) sin(t * 1.6f) * 3f * dens * k else 0f
-        val mcx2 = 0.5f * w
-        val mcy2 = baseY + floatY
-        rMic.set(mcx2 - mR, mcy2 - mR, mcx2 + mR, mcy2 + mR)
-        glow(c, mcx2, mcy2, mR * (2f + amp * 0.8f), pal[1], ((60 + 130 * amp) * min(k, 1.3f)).toInt())
-        if ((st == 1 && on) || st == 3) {
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 2f * dens
-            p.xfermode = screen
-            for (i in 0 until 3) {
-                val ph = (t * (if (st == 3) 0.9f else 0.7f) + i / 3f) % 1f
-                val rr = mR * (1.05f + ph * (0.9f + 0.8f * amp))
-                p.color = withA(grad3(pal, ph), ((1f - ph) * 180f * (0.4f + amp)).toInt())
-                c.drawCircle(mcx2, mcy2, rr, p)
-            }
-            p.xfermode = null
-        }
-        val spin = when (st) {
-            1 -> 90f
-            2 -> 220f
-            3 -> 130f
-            else -> 28f
-        }
-        mx.reset()
-        mx.setRotate(t * spin)
-        mx.postTranslate(mcx2, mcy2)
-        micSweep?.setLocalMatrix(mx)
-        p.shader = micSweep
-        p.style = Paint.Style.STROKE
-        p.xfermode = screen
-        p.strokeWidth = 13f * dens
-        p.alpha = 50
-        c.drawCircle(mcx2, mcy2, mR, p)
-        p.xfermode = null
-        p.strokeWidth = (5f + 3f * amp) * dens
-        p.alpha = ((if (on) 170 else 70) + (85 * amp).toInt()).coerceAtMost(255)
-        c.drawCircle(mcx2, mcy2, mR, p)
-        p.shader = RadialGradient(
-            mcx2, mcy2 - mR * 0.3f, mR, Color.rgb(34, 24, 96), Color.rgb(8, 6, 32), Shader.TileMode.CLAMP
-        )
-        p.style = Paint.Style.FILL
-        p.alpha = 255
-        c.drawCircle(mcx2, mcy2, mR - 4f * dens, p)
-        p.shader = null
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 2f * dens
-        p.color = withA(Color.WHITE, 40)
-        c.drawArc(
-            RectF(mcx2 - mR * 0.85f, mcy2 - mR * 0.85f, mcx2 + mR * 0.85f, mcy2 + mR * 0.85f),
-            200f, 80f, false, p
-        )
-        val ic = if (on) Color.rgb(220, 240, 255) else Color.rgb(130, 140, 160)
-        val cw = mR * 0.26f
-        val chh = mR * 0.5f
-        p.color = ic
-        p.style = Paint.Style.FILL
-        c.drawRoundRect(
-            RectF(mcx2 - cw, mcy2 - chh * 0.95f, mcx2 + cw, mcy2 + chh * 0.15f), cw, cw, p
-        )
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = mR * 0.075f
-        c.drawArc(
-            RectF(mcx2 - cw * 1.7f, mcy2 - chh * 0.55f, mcx2 + cw * 1.7f, mcy2 + chh * 0.55f),
-            0f, 180f, false, p
-        )
-        c.drawLine(mcx2, mcy2 + chh * 0.55f, mcx2, mcy2 + chh * 0.85f, p)
-        c.drawLine(mcx2 - cw * 0.9f, mcy2 + chh * 0.85f, mcx2 + cw * 0.9f, mcy2 + chh * 0.85f, p)
-        if (!on) {
-            p.color = Color.rgb(239, 68, 68)
-            c.drawLine(mcx2 - mR * 0.45f, mcy2 - mR * 0.45f, mcx2 + mR * 0.45f, mcy2 + mR * 0.45f, p)
-        }
-
-        // পাশের বোতাম: Chat ও Tools
-        val sb = 0.15f * w
-        sideBtn(c, 0.19f * w, baseY, sb, 0, "Chat", pal, rChat)
-        sideBtn(c, 0.81f * w, baseY, sb, 1, "Tools", pal, rTools)
-
-        // ৭. ওপরের অংশ: অবতার, শুভেচ্ছা, মেনু
-        val hy = top + 36f * dens
-        val ar = 24f * dens
-        val cxA = 16f * dens + ar
-        c.save()
-        tmpPath.reset()
-        tmpPath.addCircle(cxA, hy, ar, Path.Direction.CW)
-        c.clipPath(tmpPath)
-        val src = Rect(
-            (face.width * 0.28f).toInt(), (face.height * 0.17f).toInt(),
-            (face.width * 0.72f).toInt(), (face.height * 0.61f).toInt()
-        )
-        c.drawBitmap(face, src, RectF(cxA - ar, hy - ar, cxA + ar, hy + ar), bmpPaint)
-        c.restore()
-        mx.reset()
-        mx.setRotate(t * 60f)
-        mx.postTranslate(cxA, hy)
-        sweeps[0]?.setLocalMatrix(mx)
-        p.shader = sweeps[0]
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 2.2f * dens
-        p.alpha = 255
-        c.drawCircle(cxA, hy, ar, p)
-        p.shader = null
-        tp.style = Paint.Style.FILL
-        tp.textAlign = Paint.Align.LEFT
-        tp.typeface = Typeface.DEFAULT_BOLD
-        tp.color = Color.WHITE
-        tp.textSize = 17f * dens
-        c.drawText("Hello, সাঈদ", cxA + ar + 12f * dens, hy - 2f * dens, tp)
         tp.typeface = Typeface.DEFAULT
-        tp.color = Color.rgb(170, 160, 225)
-        tp.textSize = 12f * dens
-        c.drawText("আজ কীভাবে সাহায্য করতে পারি?", cxA + ar + 12f * dens, hy + 16f * dens, tp)
-        val mr = 22f * dens
-        val mcx3 = w - 16f * dens - mr
-        rMenu.set(mcx3 - mr, hy - mr, mcx3 + mr, hy + mr)
-        p.style = Paint.Style.FILL
-        p.color = Color.argb(215, 22, 14, 70)
-        c.drawCircle(mcx3, hy, mr, p)
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 1.5f * dens
-        p.color = withA(pal[0], 170)
-        c.drawCircle(mcx3, hy, mr, p)
-        p.strokeWidth = 2f * dens
-        p.color = Color.rgb(200, 230, 255)
-        c.drawLine(mcx3 - mr * 0.42f, hy - mr * 0.3f, mcx3 + mr * 0.42f, hy - mr * 0.3f, p)
-        c.drawLine(mcx3 - mr * 0.42f, hy, mcx3 + mr * 0.1f, hy, p)
-        c.drawLine(mcx3 - mr * 0.42f, hy + mr * 0.3f, mcx3 + mr * 0.42f, hy + mr * 0.3f, p)
+        c.drawText(label, 0.5f * w, Y(1182f), tp)
 
-        // ৮. নিচের নেভিগেশন বার
-        val navTop = h - botInset - navAreaH + 10f * dens
-        val navBot = h - botInset - 10f * dens
-        val bar = RectF(0.04f * w, navTop, 0.96f * w, navBot)
-        p.shader = LinearGradient(
-            0f, bar.top, 0f, bar.bottom, Color.argb(235, 26, 18, 80), Color.argb(240, 10, 6, 38),
-            Shader.TileMode.CLAMP
-        )
-        p.style = Paint.Style.FILL
-        p.alpha = 255
-        c.drawRoundRect(bar, 22f * dens, 22f * dens, p)
-        p.shader = null
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 1.5f * dens
-        p.color = withA(pal[1], 170)
-        c.drawRoundRect(bar, 22f * dens, 22f * dens, p)
-        val slot = bar.width() / 5f
-        val names = arrayOf("Home", "Memory", "", "Activities", "Settings")
-        for (i in 0 until 5) {
-            val cx = bar.left + slot * (i + 0.5f)
-            val raise = if (i == 2) 14f * dens else 0f
-            rNav[i].set(bar.left + slot * i, bar.top - raise, bar.left + slot * (i + 1), bar.bottom)
-            val active = navActive == i
-            if (i == 2) {
-                val cy = bar.top + 6f * dens
-                val rr = 27f * dens
-                glow(c, cx, cy, rr * 2f, pal[1], (90 + 50 * sin(t * 2f)).toInt())
-                p.style = Paint.Style.FILL
-                p.color = Color.rgb(14, 9, 52)
-                c.drawCircle(cx, cy, rr, p)
-                mx.reset()
-                mx.setRotate(t * 70f)
-                mx.postTranslate(cx, cy)
-                sweeps[1]?.setLocalMatrix(mx)
-                p.shader = sweeps[1]
-                p.style = Paint.Style.STROKE
-                p.strokeWidth = 2.6f * dens
-                p.alpha = 255
-                c.drawCircle(cx, cy, rr, p)
-                p.shader = null
-                navIcon(c, 2, cx, cy, 11f * dens, if (active) Color.WHITE else pal[0])
-            } else {
-                val cy = bar.centerY() - 7f * dens
-                val col = if (active) pal[0] else Color.rgb(150, 150, 190)
-                if (active) glow(c, cx, cy, 30f * dens, pal[0], 110)
-                navIcon(c, i, cx, cy, 10f * dens, col)
-                tp.style = Paint.Style.FILL
-                tp.textAlign = Paint.Align.CENTER
-                tp.typeface = if (active) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                tp.color = col
-                tp.textSize = 10f * dens
-                c.drawText(names[i], cx, cy + 25f * dens, tp)
-            }
-        }
-
-        // ৯. ভাসমান কণা
+        // ৮. ভাসমান কণা
         if (particlesOn()) {
             val cnt = (n * min(k, 1.2f) / 1.2f).toInt().coerceIn(6, n)
             p.xfermode = screen
@@ -697,66 +432,54 @@ class HomeScene(
                     px[i] = rnd.nextFloat()
                 }
                 val x = (px[i] + 0.012f * sin(t * 0.8f + i)) * w
-                p.color = withA(pal[i % 3], 130)
+                p.color = withA(if (i % 3 == 0) purple else cyan, 130)
                 c.drawCircle(x, py[i] * h, ps[i] * dens, p)
             }
             p.xfermode = null
         }
 
-        // ১০. ট্যাপ করলে রঙের ঢেউ
+        // ৯. ট্যাপ করলে রঙের ঢেউ
         val iter = ripples.iterator()
         while (iter.hasNext()) {
             val r = iter.next()
-            val age = (now - r.t0) / 750f
+            val age = (now - r.t0) / 700f
             if (age >= 1f) {
                 iter.remove()
                 continue
             }
-            val a = ((1f - age) * 200f).toInt()
             p.xfermode = screen
             p.style = Paint.Style.STROKE
             p.strokeWidth = 3f * dens
-            p.color = withA(r.color, a)
-            c.drawCircle(r.x, r.y, age * 0.45f * w, p)
-            p.strokeWidth = 1.5f * dens
-            p.color = withA(r.color, a / 2)
-            c.drawCircle(r.x, r.y, age * 0.3f * w, p)
-            if (age < 0.45f) {
-                p.style = Paint.Style.FILL
-                p.color = withA(r.color, ((0.45f - age) / 0.45f * 34f).toInt())
-                c.drawRect(0f, 0f, w, h, p)
-            }
+            p.color = withA(r.color, ((1f - age) * 200f).toInt())
+            c.drawCircle(r.x, r.y, age * 0.4f * w, p)
             p.xfermode = null
         }
 
-        if (!paused() || ripples.isNotEmpty()) postInvalidateOnAnimation()
+        postInvalidateOnAnimation()
     }
 
     private fun hit(x: Float, y: Float): String? {
-        val dx = x - rMic.centerX()
-        val dy = y - rMic.centerY()
-        val rr = rMic.width() / 2f
+        val dx = x - micRect.centerX()
+        val dy = y - micRect.centerY()
+        val rr = micRect.width() / 2f
         if (dx * dx + dy * dy <= rr * rr) return "mic"
-        if (rChat.contains(x, y)) return "chat"
-        if (rTools.contains(x, y)) return "tools"
-        val mx2 = x - rMenu.centerX()
-        val my2 = y - rMenu.centerY()
-        val mr = rMenu.width() / 2f
-        if (mx2 * mx2 + my2 * my2 <= mr * mr) return "menu"
-        for (i in 0 until 5) if (rNav[i].contains(x, y)) return "nav$i"
+        val gx = x - gearRect.centerX()
+        val gy = y - gearRect.centerY()
+        val gr = gearRect.width() / 2f
+        if (gx * gx + gy * gy <= gr * gr) return "menu"
         return null
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        val w = width.toFloat().coerceAtLeast(1f)
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                lookTarget = ((e.x / w) - 0.5f) * 2f
+            MotionEvent.ACTION_DOWN -> {
+                touching = hit(e.x, e.y) == "mic"
                 invalidate()
                 return true
             }
+            MotionEvent.ACTION_MOVE -> return true
             MotionEvent.ACTION_UP -> {
-                lookTarget = 0f
+                touching = false
                 val act = hit(e.x, e.y)
                 if (act != null) {
                     addRipple(e.x, e.y)
@@ -766,7 +489,7 @@ class HomeScene(
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                lookTarget = 0f
+                touching = false
                 return true
             }
         }
