@@ -142,7 +142,6 @@ class IconView(context: Context, private val kind: Int) : View(context) {
     }
 }
 
-/** চাবির লিমিট শেষ বা চাবি অচল হলে এই ব্যতিক্রম ওঠে, তখন পরের চাবি চেষ্টা হয় */
 class QuotaException(msg: String) : Exception(msg)
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
@@ -158,8 +157,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     @Volatile private var uiState = 1
     @Volatile private var micLevel = 0f
     private var fromHome = false
+    private var enrolling = false
+    private val enrollList = ArrayList<FloatArray>()
+    private var lastReject = 0L
 
-    // অ্যাঞ্জেলার কথার সাথে ঠোঁট নড়ানোর জন্য: TTS-এর শব্দ-ভিত্তিক সময় (সমর্থিত হলে), নইলে হালকা অনুকরণ
     @Volatile private var rangeCount = 0
     @Volatile private var lastWordAt = 0L
     @Volatile private var wordLen = 4
@@ -278,7 +279,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         chatScroll = ScrollView(this).apply { addView(chatLog) }
         chatPane = buildChatPane()
 
-        // নতুন প্রিমিয়াম হোম স্ক্রিন (সব কিছু কোডে আঁকা ও অ্যানিমেটেড)
         val home = FrameLayout(this)
         scene = HomeScene(
             this,
@@ -291,7 +291,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             { a -> onHomeAction(a) }
         )
         home.addView(scene, FrameLayout.LayoutParams(MATCH, MATCH))
-        // নিচের দুটো পর্দায় দেখা যায় না, তবে কোডের ভেতরে ব্যবহার হয়
         status = tv("", 11f, Color.GRAY)
         micPill = TextView(this)
 
@@ -346,7 +345,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         loadChat()
         setOrb(1)
 
-        // ব্যাকগ্রাউন্ড থেকে অন্য অ্যাপ খুলতে "Display over other apps" পারমিশন লাগে
         if (!android.provider.Settings.canDrawOverlays(this)) {
             try {
                 startActivity(
@@ -370,7 +368,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (page.visibility != View.VISIBLE) startListening()
     }
 
-    // ব্যাকগ্রাউন্ডে গেলে শোনা বন্ধ করা হয় না, ফোরগ্রাউন্ড সার্ভিস প্রসেস চালু রাখে
     override fun onPause() {
         resumed = false
         AngelaBus.appVisible = false
@@ -395,7 +392,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (page.visibility == View.VISIBLE) goBack() else super.onBackPressed()
     }
 
-    // ছোট ইলেকট্রনিক আওয়াজ বানায়, অডিও ফোকাস নেয় না তাই ইউটিউব থামে না
     private fun blip(f0: Float, f1: Float, ms: Int) {
         Thread {
             try {
@@ -461,17 +457,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         blip(900f, 1500f, 120)
         when (a) {
             "mic" -> toggleMic()
-            "chat" -> openDirect("CHAT") { chatPane }
-            "tools" -> openDirect("TOOLS") { toolsView() }
-            "menu", "nav4" -> openMenu()
-            "nav0" -> if (page.visibility == View.VISIBLE) {
-                page.visibility = View.GONE
-                setNav(0)
-                startListening()
-            }
-            "nav1" -> openDirect("MEMORY") { listView("mem") }
-            "nav2" -> openDirect("CUSTOMIZE") { customizeView() }
-            "nav3" -> openDirect("TODAY TASKS") { listView("tasks") }
+            "menu" -> openMenu()
         }
     }
 
@@ -529,7 +515,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             )
             return
         }
-        // ব্যাকগ্রাউন্ডে মাইক চালু রাখার জন্য ফোরগ্রাউন্ড সার্ভিস
         try {
             startForegroundService(Intent(this, AngelaService::class.java))
         } catch (e: Exception) {
@@ -637,7 +622,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             runOnUiThread {
                 if (my == gen) {
                     listening = false
-                    runChat(prefs.getString("key", "") ?: "", data)
+                    handleCaptured(data)
                 }
             }
         } else {
@@ -777,7 +762,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         })
         b.addView(vst)
 
-        // কথা শেষ ধরার অপেক্ষা
         val waitNow = prefs.getInt("wait", 12).coerceIn(6, 25)
         val wl = tv("কথা শেষ ধরার অপেক্ষা: " + (waitNow / 10.0) + " সেকেন্ড", 14f)
         b.addView(wl)
@@ -797,7 +781,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         b.addView(sb, LinearLayout.LayoutParams(MATCH, WRAP))
         b.addView(tv("বাড়ালে আপনি থামলেও সে অপেক্ষা করবে, কমালে দ্রুত উত্তর দেবে।", 12f, Color.GRAY))
 
-        // উত্তরের দৈর্ঘ্য
         val lenBtn = btn("") { }
         lenBtn.text = "উত্তরের দৈর্ঘ্য: " + LEN_NAMES[prefs.getInt("len", 0).coerceIn(0, 2)]
         lenBtn.setOnClickListener {
@@ -807,7 +790,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         b.addView(lenBtn)
 
-        // কথা বলার ধরন
         val styBtn = btn("") { }
         styBtn.text = "কথা বলার ধরন: " + STYLE_NAMES[prefs.getInt("style", 0).coerceIn(0, STYLE_NAMES.size - 1)]
         styBtn.setOnClickListener {
@@ -817,7 +799,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         b.addView(styBtn)
 
-        // কথার গতি ও কণ্ঠের সুর
         fun slider(title: String, key: String, def: Int, lo: Int, hi: Int, onSet: (Int) -> Unit) {
             val cur = prefs.getInt(key, def).coerceIn(lo, hi)
             val lab = tv(title + ": " + cur + "%", 14f)
@@ -844,7 +825,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             tts?.speak("হ্যালো সাঈদ, আমি অ্যাঞ্জেলা।", TextToSpeech.QUEUE_FLUSH, null, "demo")
         })
 
-        // চাবি ব্যবস্থাপনা ও ব্যাকআপ
         b.addView(tv("", 8f))
         b.addView(btn("সব Gemini API চাবি ব্যবস্থাপনা") { openSub("API KEYS", keysView()) })
         b.addView(btn("ডাটা ব্যাকআপ কপি করো") { copyBackup() })
@@ -852,7 +832,29 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         b.addView(restoreField, LinearLayout.LayoutParams(MATCH, WRAP))
         b.addView(btn("ব্যাকআপ রিস্টোর করো") { restoreBackup(restoreField.text.toString()) })
 
-        // ভার্সন তথ্য
+        b.addView(tv("\nভয়েস লক (শুধু সাঈদের কণ্ঠে সাড়া)", 14f, soft))
+        b.addView(btn("আমার কণ্ঠ শেখাও") { startEnroll() })
+        val lockBtn = btn("")
+        fun lockLabel(): String = "ভয়েস লক: " + (if (prefs.getBoolean("vp_on", false)) "চালু ✓" else "বন্ধ")
+        lockBtn.text = lockLabel()
+        lockBtn.setOnClickListener {
+            if ((prefs.getString("vp_profile", "") ?: "").isEmpty()) {
+                toast("আগে 'আমার কণ্ঠ শেখাও' চাপো")
+            } else {
+                prefs.edit().putBoolean("vp_on", !prefs.getBoolean("vp_on", false)).apply()
+                lockBtn.text = lockLabel()
+            }
+        }
+        b.addView(lockBtn)
+        slider("কণ্ঠ মেলানোর সহনশীলতা", "vp_sens", 115, 80, 200) { }
+        b.addView(tv("বাড়ালে সাঈদের কণ্ঠ সহজে মানবে কিন্তু অন্যজনকেও মানতে পারে, কমালে কড়া হবে।", 12f, Color.GRAY))
+        b.addView(tv("শেষ মিলানো: " + (prefs.getString("vp_last", "এখনো হয়নি") ?: ""), 12f, Color.GRAY))
+        b.addView(btn("শেখানো কণ্ঠ মুছো") {
+            prefs.edit().remove("vp_profile").putBoolean("vp_on", false).apply()
+            lockBtn.text = lockLabel()
+            toast("কণ্ঠের তথ্য মুছেছে")
+        })
+
         val vn = try {
             packageManager.getPackageInfo(packageName, 0).versionName
         } catch (e: Exception) {
@@ -863,7 +865,92 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
     }
 
-    // ---------- CUSTOMIZE: রং, আলো ও অ্যানিমেশন ----------
+    private fun speakLocal(text: String) {
+        if (ttsReady) {
+            busy = true
+            stopListening()
+            setOrb(3)
+            applyLang(text)
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "angela")
+        } else {
+            finishTurn()
+        }
+    }
+
+    private fun handleCaptured(data: ByteArray) {
+        if (enrolling) {
+            onEnrollSample(data)
+            return
+        }
+        val key = prefs.getString("key", "") ?: ""
+        val prof = prefs.getString("vp_profile", "") ?: ""
+        if (!prefs.getBoolean("vp_on", false) || prof.isEmpty()) {
+            runChat(key, data)
+            return
+        }
+        busy = true
+        Thread {
+            var ok = true
+            try {
+                val v = VoicePrint.extract(data)
+                if (v != null) {
+                    val r = VoicePrint.check(prof, v, prefs.getInt("vp_sens", 115) / 100f)
+                    ok = r.first <= r.second
+                    prefs.edit().putString("vp_last", "দূরত্ব " + String.format(Locale.US, "%.2f", r.first) +
+                        " / সীমা " + String.format(Locale.US, "%.2f", r.second)).apply()
+                }
+            } catch (e: Exception) {
+                ok = true
+            }
+            runOnUiThread {
+                if (ok) {
+                    busy = false
+                    runChat(key, data)
+                } else {
+                    rejectOther()
+                }
+            }
+        }.start()
+    }
+
+    private fun rejectOther() {
+        val now = System.currentTimeMillis()
+        if (now - lastReject < 15000L) {
+            finishTurn()
+            return
+        }
+        lastReject = now
+        val msg = "আমি শুধু সাঈদের পার্সোনাল অ্যাসিস্ট্যান্ট।"
+        addMsg(msg, false, false)
+        speakLocal(msg)
+    }
+
+    private fun startEnroll() {
+        enrolling = true
+        enrollList.clear()
+        page.visibility = View.GONE
+        setNav(0)
+        toast("প্রতিবার একটা পুরো বাক্য বলো (৩-৫ সেকেন্ড), এভাবে ৬ বার")
+        speakLocal("আমি তোমার কণ্ঠ শিখব। প্রতিবার একটা পুরো বাক্য বলো, এভাবে ছয়বার।")
+    }
+
+    private fun onEnrollSample(data: ByteArray) {
+        val v = VoicePrint.extract(data)
+        if (v == null) {
+            speakLocal("কণ্ঠ কম পেলাম, আরেকটু জোরে আর লম্বা করে বলো।")
+            return
+        }
+        enrollList.add(v)
+        val words = listOf("একটা", "দুটো", "তিনটা", "চারটা", "পাঁচটা")
+        if (enrollList.size < 6) {
+            speakLocal(words[enrollList.size - 1] + " হয়েছে, আরেকটা বলো।")
+            return
+        }
+        prefs.edit().putString("vp_profile", VoicePrint.buildProfile(enrollList)).putBoolean("vp_on", true).apply()
+        enrolling = false
+        speakLocal("ঠিক আছে, এখন থেকে তোমার কণ্ঠ চিনব।")
+    }
+
     private fun customizeView(): View {
         val b = vbox()
         b.addView(tv("RGB থিম বেছে নাও", 15f, soft).apply { typeface = Typeface.DEFAULT_BOLD })
@@ -929,7 +1016,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
     }
 
-    // ---------- TOOLS: সব সুবিধা একসাথে ----------
     private fun toolsView(): View {
         val b = vbox()
         val items = listOf<Triple<String, String, () -> Unit>>(
@@ -967,14 +1053,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
     }
 
-    // ---------- CHAT+ : ছবি বিশ্লেষণ ও কোড লেখা ----------
     private var studioPane: LinearLayout? = null
     private var studioLog: LinearLayout? = null
     private var studioScroll: ScrollView? = null
     private var studioNote: TextView? = null
     private var pendingImage: String? = null
     private var studioBusy = false
-    private var studioWeb = false
     private var pendingDoc: JSONObject? = null
     private var pendingDocText: String? = null
     private var pendingDocName = ""
@@ -1120,7 +1204,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }.start()
     }
 
-    // + বোতাম: সব অপশন এই ছোট মেনুর ভেতরে থাকে
     private fun showAttachMenu(anchor: View, field: EditText) {
         val m = android.widget.PopupMenu(this, anchor)
         m.menu.add(0, 1, 0, "ছবি যোগ করো")
@@ -1139,7 +1222,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         m.show()
     }
 
-    // প্রশ্ন দেখে নিজে ঠিক করে ওয়েব সার্চ লাগবে কি না
     private fun needsWeb(q: String): Boolean {
         val l = q.lowercase()
         val keys = listOf(
@@ -1661,7 +1743,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             java.text.SimpleDateFormat("yyyy-MM-dd HH:mm, EEEE", Locale.US).format(java.util.Date())
     }
 
-    // ---------- একাধিক API চাবি: একটার লিমিট শেষ হলে পরেরটা ----------
     private val coolUntil = HashMap<String, Long>()
 
     private fun loadKeys(): MutableList<Pair<String, String>> {
@@ -1893,7 +1974,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val hre = Regex("\\[\\[HEARD:(.*?)\\]\\]", RegexOption.DOT_MATCHES_ALL)
             val heard = hre.find(text)?.groupValues?.get(1)?.trim() ?: ""
             text = text.replace(hre, "").trim()
-            // মডেল ভুল করে সাঈদের কথা আবার বললে সেটা কেটে ফেলা
             if (heard.isNotBlank() && text.startsWith(heard)) {
                 text = text.removePrefix(heard)
                     .trimStart(' ', '\n', '।', ',', ':', '"', '\u201C', '\u201D')
@@ -2130,7 +2210,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }.start()
     }
 
-    // ইংরেজি উত্তরে ইংরেজি কণ্ঠ, বাংলায় বাংলা কণ্ঠ
     private fun applyLang(text: String) {
         val bnCount = text.count { it in '\u0980'..'\u09FF' }
         val letters = text.count { it.isLetter() }
@@ -2214,7 +2293,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return ScrollView(this).apply { addView(b, ViewGroup.LayoutParams(MATCH, WRAP)) }
     }
 
-    // ---------- ইউটিউব: খুঁজে প্রথম ভিডিও সরাসরি চালানো ----------
     private fun ytLaunch(uri: String) {
         val i = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage("com.google.android.youtube")
         try {
@@ -2260,7 +2338,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }.start()
     }
 
-    // ব্যাকগ্রাউন্ড থেকেও অ্যাপ খুলতে অ্যাপ-কনটেক্সট ও নতুন টাস্ক ব্যবহার হয়
     private fun launch(i: Intent) {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         applicationContext.startActivity(i)
