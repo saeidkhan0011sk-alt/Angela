@@ -834,7 +834,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         b.addView(tv("\nভয়েস লক (শুধু সাঈদের কণ্ঠে সাড়া)", 14f, soft))
         b.addView(btn("আমার কণ্ঠ শেখাও") { startEnroll() })
-        val lockBtn = btn("")
+        val lockBtn = btn("") { }
         fun lockLabel(): String = "ভয়েস লক: " + (if (prefs.getBoolean("vp_on", false)) "চালু ✓" else "বন্ধ")
         lockBtn.text = lockLabel()
         lockBtn.setOnClickListener {
